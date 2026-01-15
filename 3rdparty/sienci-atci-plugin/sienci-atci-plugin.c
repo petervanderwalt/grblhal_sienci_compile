@@ -555,7 +555,7 @@ static void onRealtimeReport(stream_write_ptr stream_write, report_tracking_flag
 }
 
 /* --- Init --- */
-void atci_init(void)
+void atci_init_test(void)
 {
     static setting_details_t settings = {
         .settings = plugin_settings,
