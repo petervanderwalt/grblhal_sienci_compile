@@ -12,8 +12,7 @@ OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
 
-# --- Board Definition (The missing piece) ---
-# We generate this file to ensure PIO knows what 'genericSTM32F412VG' is.
+# --- Board Definition ---
 BOARD_DEFINITION = {
   "build": {
     "core": "stm32",
@@ -190,8 +189,10 @@ HTML_TEMPLATE = """
         .card {{ background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
         .machine-title {{ font-size: 1.5em; font-weight: bold; margin-bottom: 10px; }}
         .variant {{ margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px; }}
-        .btn {{ display: inline-block; background-color: #28a745; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; }}
+        .btn {{ display: inline-block; background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; margin-right: 5px; font-size: 0.9em; }}
         .btn:hover {{ background-color: #218838; }}
+        .btn-secondary {{ background-color: #6c757d; }}
+        .btn-secondary:hover {{ background-color: #5a6268; }}
         .meta {{ font-size: 0.85em; color: #666; margin-top: 5px; }}
     </style>
 </head>
@@ -279,7 +280,6 @@ def main():
         os.makedirs(OUTPUT_DIR)
 
     # --- Generate Board Definition ---
-    # We write this file explicitly to ensure it exists and is correct
     boards_dir = os.path.join(FIRMWARE_DIR, 'boards')
     if not os.path.exists(boards_dir):
         os.makedirs(boards_dir)
@@ -312,7 +312,7 @@ def main():
             print(f"Skipping {machine_name}: No profileURL found.")
             continue
 
-        # 3. Fetch Machine Specific JSON (Convert blob to raw)
+        # 3. Fetch Machine Specific JSON
         raw_url = convert_to_raw_url(profile_url)
         machine_config = fetch_json(raw_url)
 
@@ -369,7 +369,6 @@ def main():
 
             # Build
             print(f"    Starting compilation for {variant_name}...")
-            # subprocess.call streams output directly to console
             return_code = subprocess.call(["pio", "run", "-e", env_config['env_name']])
 
             if return_code != 0:
@@ -380,18 +379,30 @@ def main():
                 print(f"    [SUCCESS] Built successfully")
 
                 safe_v_name = "".join(x for x in variant_name if x.isalnum() or x in " -_").replace(" ", "_")
-                filename = f"grblhal_{env_config['env_name']}_{safe_v_name}_{TIMESTAMP}.hex"
+                filename_hex = f"grblhal_{env_config['env_name']}_{safe_v_name}_{TIMESTAMP}.hex"
+                filename_ini = f"grblhal_{env_config['env_name']}_{safe_v_name}_{TIMESTAMP}.ini"
 
                 build_dir = f".pio/build/{env_config['env_name']}"
                 found_hex = False
+
+                # Copy HEX
                 for f_name in os.listdir(build_dir):
                     if f_name.endswith(".hex"):
-                        shutil.copy(os.path.join(build_dir, f_name), os.path.join("../", OUTPUT_DIR, filename))
+                        shutil.copy(os.path.join(build_dir, f_name), os.path.join("../", OUTPUT_DIR, filename_hex))
                         found_hex = True
                         break
 
+                # Copy INI (which is currently platformio.ini in cwd)
+                shutil.copy("platformio.ini", os.path.join("../", OUTPUT_DIR, filename_ini))
+
                 if found_hex:
-                    html_content += f"<div class='variant'><strong>{variant_name}</strong><br><a href='{filename}' class='btn' download>Download .HEX</a></div>"
+                    html_content += f"""
+                    <div class='variant'>
+                        <strong>{variant_name}</strong><br>
+                        <a href='{filename_hex}' class='btn' download>Download .HEX</a>
+                        <a href='{filename_ini}' class='btn btn-secondary' download>View Config</a>
+                    </div>
+                    """
                 else:
                     html_content += f"<div class='variant'><strong>{variant_name}</strong>: <span style='color:orange'>Hex not found</span></div>"
 
