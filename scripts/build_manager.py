@@ -15,8 +15,10 @@ TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
 # Files to copy from repo root to firmware dir
 LOCAL_FILES = {
     "genericSTM32F412VG.json": "boards/genericSTM32F412VG.json",
+    "longboard32.c": "boards/longboard32.c",
+    "longboard32_map.h": "boards/longboard32_map.h",
     "STM32F412VGTX_FLASH.ld": "STM32F412VGTX_FLASH.ld",
-    "platformio.ini": "platformio.ini" # We read this into memory, but checking it exists is good
+    "platformio.ini": "platformio.ini"
 }
 
 # --- Environment Mapping ---
@@ -24,6 +26,34 @@ ENV_CONFIGS = {
     "BOARD_LONGBOARD32_EXT": "slb_ext",
     "BOARD_LONGBOARD32": "slb"
 }
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sienci Labs Firmware Downloads</title>
+    <style>
+        body {{ font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; background-color: #f4f6f8; color: #333; }}
+        h1 {{ border-bottom: 2px solid #0056b3; padding-bottom: 10px; color: #0056b3; }}
+        .card {{ background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        .machine-title {{ font-size: 1.5em; font-weight: bold; margin-bottom: 10px; }}
+        .variant {{ margin-top: 15px; border-top: 1px solid #eee; padding-top: 10px; }}
+        .btn {{ display: inline-block; background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; margin-right: 5px; font-size: 0.9em; }}
+        .btn:hover {{ background-color: #218838; }}
+        .btn-secondary {{ background-color: #6c757d; }}
+        .btn-secondary:hover {{ background-color: #5a6268; }}
+        .meta {{ font-size: 0.85em; color: #666; margin-top: 5px; }}
+    </style>
+</head>
+<body>
+    <h1>Firmware Builds ({date})</h1>
+    <p>Automated builds for Sienci Labs controllers.</p>
+    {content}
+</body>
+</html>
+"""
 
 def fetch_json(url):
     try:
@@ -47,10 +77,6 @@ def generate_build_flags(machine_data, variant_data):
     variant_defs = {**variant_data.get("default_symbols", {}),
                     **variant_data.get("setting_defaults", {})}
     combined_defs = {**base_defs, **variant_defs}
-
-    # We DO NOT add system flags here anymore.
-    # We trust your platformio.ini has the base system config.
-    # We only add the overrides from the JSON profile.
 
     for key, value in combined_defs.items():
         if value is None:
