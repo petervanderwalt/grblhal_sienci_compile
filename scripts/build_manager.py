@@ -9,7 +9,7 @@ import urllib.request
 # --- Configuration ---
 PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles.json"
 BOARD_FILE = "genericSTM32F412VG.json"
-LINKER_FILE = "STM32F412VGTX_FLASH.ld"  # <--- Added this
+LINKER_FILE = "STM32F412VGTX_FLASH.ld"
 OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
@@ -19,14 +19,14 @@ ENV_CONFIGS = {
     "BOARD_LONGBOARD32_EXT": {
         "env_name": "slb_ext",
         "board": "genericSTM32F412VG",
-        "ldscript": "STM32F412VGTX_FLASH.ld",
+        "ldscript": LINKER_FILE,
         "usb_flags": "-D USB_SERIAL_CDC=1",
         "extra_flags": "-D STM32F412Vx -D BOARD_LONGBOARD32_EXT"
     },
     "BOARD_LONGBOARD32": {
         "env_name": "slb",
         "board": "genericSTM32F412VG",
-        "ldscript": "STM32F412VGTX_FLASH.ld",
+        "ldscript": LINKER_FILE,
         "usb_flags": "-D USB_SERIAL_CDC=1",
         "extra_flags": "-D STM32F412Vx -D BOARD_LONGBOARD32"
     }
@@ -213,7 +213,10 @@ def generate_build_flags(machine_data, variant_data, base_config):
         "LWIP_HTTPD_CGI_ADV": 1,
         "LWIP_HTTPD_SUPPORT_POST": 1,
         "LWIP_HTTPD_SUPPORT_WEBDAV": 1,
-        "ATCI_ENABLE": 1
+        "ATCI_ENABLE": 1,
+        # Critical for Booting SLB
+        "HSE_VALUE": 25000000,
+        "VECT_TAB_OFFSET": "0x8000"
     }
 
     final_defs = {**system_flags, **combined_defs}
@@ -238,7 +241,7 @@ def main():
     if not os.path.exists(boards_dir):
         os.makedirs(boards_dir)
 
-    # Copy Board JSON
+    # Copy Local Board JSON
     if os.path.exists(BOARD_FILE):
         shutil.copy(BOARD_FILE, os.path.join(boards_dir, BOARD_FILE))
         print(f"Copied local {BOARD_FILE} to {boards_dir}")
@@ -246,13 +249,14 @@ def main():
         print(f"Error: {BOARD_FILE} not found in repository root.")
         sys.exit(1)
 
-    # Copy Linker Script - CRITICAL FOR BOOTING
+    # --- Prepare Linker Script ---
+    # Critical: Copy local linker script to firmware dir so PIO finds it
     if os.path.exists(LINKER_FILE):
         shutil.copy(LINKER_FILE, os.path.join(FIRMWARE_DIR, LINKER_FILE))
         print(f"Copied local {LINKER_FILE} to {FIRMWARE_DIR}")
     else:
-        print(f"Warning: {LINKER_FILE} not found in repo root. Using default (might not boot).")
-        # We don't exit here because *maybe* it's in the repo structure, but unlikely.
+        print(f"CRITICAL ERROR: {LINKER_FILE} not found in repo root. Build will likely not boot.")
+        sys.exit(1)
 
     # 1. Fetch Main Profiles List
     profiles = fetch_json(PROFILES_URL)
@@ -328,8 +332,10 @@ def main():
             with open("platformio.ini", "w") as f:
                 f.write(ini_content)
 
+            # Clean
             subprocess.call(["pio", "run", "-t", "clean", "-e", env_config['env_name']])
 
+            # Build
             print(f"    Starting compilation for {variant_name}...")
             return_code = subprocess.call(["pio", "run", "-e", env_config['env_name']])
 
