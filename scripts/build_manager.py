@@ -9,6 +9,7 @@ import urllib.request
 # --- Configuration ---
 PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles.json"
 BOARD_FILE = "genericSTM32F412VG.json"
+LINKER_FILE = "STM32F412VGTX_FLASH.ld" # The critical file for bootloader offsets
 OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
@@ -165,7 +166,6 @@ HTML_TEMPLATE = """
 """
 
 def fetch_json(url):
-    """Downloads and parses JSON from a URL."""
     try:
         print(f"Fetching: {url}")
         with urllib.request.urlopen(url) as response:
@@ -175,26 +175,19 @@ def fetch_json(url):
         return None
 
 def convert_to_raw_url(blob_url):
-    """Converts a GitHub blob URL to a raw content URL."""
     if "github.com" in blob_url and "blob" in blob_url:
         return blob_url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
     return blob_url
 
 def generate_build_flags(machine_data, variant_data, base_config):
     flags = []
-
-    # 1. Base Machine Defaults
     base_defs = {**machine_data.get("default_symbols", {}),
                  **machine_data.get("setting_defaults", {}),
                  **machine_data.get("setting_defaults_trinamic", {})}
-
-    # 2. Variant Overrides
     variant_defs = {**variant_data.get("default_symbols", {}),
                     **variant_data.get("setting_defaults", {})}
-
     combined_defs = {**base_defs, **variant_defs}
 
-    # 3. System Defaults
     system_flags = {
         "WEB_BUILD": None,
         "USE_HAL_DRIVER": None,
@@ -219,7 +212,8 @@ def generate_build_flags(machine_data, variant_data, base_config):
         "LWIP_HTTPD_SUPPORT_11_KEEPALIVE": 1,
         "LWIP_HTTPD_CGI_ADV": 1,
         "LWIP_HTTPD_SUPPORT_POST": 1,
-        "LWIP_HTTPD_SUPPORT_WEBDAV": 1
+        "LWIP_HTTPD_SUPPORT_WEBDAV": 1,
+        "ATCI_ENABLE": 1
     }
 
     final_defs = {**system_flags, **combined_defs}
@@ -240,11 +234,11 @@ def main():
         os.makedirs(OUTPUT_DIR)
 
     # --- Prepare Board Definition ---
-    # Copy the local genericSTM32F412VG.json to the firmware/boards folder
     boards_dir = os.path.join(FIRMWARE_DIR, 'boards')
     if not os.path.exists(boards_dir):
         os.makedirs(boards_dir)
 
+    # 1. Copy Board JSON (Must be in repo root)
     if os.path.exists(BOARD_FILE):
         shutil.copy(BOARD_FILE, os.path.join(boards_dir, BOARD_FILE))
         print(f"Copied local {BOARD_FILE} to {boards_dir}")
@@ -252,7 +246,17 @@ def main():
         print(f"Error: {BOARD_FILE} not found in repository root.")
         sys.exit(1)
 
-    # 1. Fetch Main Profiles List
+    # 2. Copy Linker Script (Must be in repo root)
+    # We copy this to the firmware root to overwrite the upstream file
+    if os.path.exists(LINKER_FILE):
+        shutil.copy(LINKER_FILE, os.path.join(FIRMWARE_DIR, LINKER_FILE))
+        print(f"Copied local {LINKER_FILE} to {FIRMWARE_DIR} (Overwriting upstream)")
+    else:
+        print(f"Error: {LINKER_FILE} not found in repository root.")
+        print("Your board requires a custom linker script to boot. Please upload it.")
+        sys.exit(1)
+
+    # 3. Fetch Main Profiles List
     profiles = fetch_json(PROFILES_URL)
     if not profiles:
         print("Failed to load profiles.json. Exiting.")
@@ -264,7 +268,7 @@ def main():
     cwd = os.getcwd()
     os.chdir(FIRMWARE_DIR)
 
-    # 2. Iterate Machines
+    # Iterate Machines
     for machine in profiles.get('machines', []):
         machine_name = machine['name']
         profile_url = machine.get('profileURL')
@@ -275,7 +279,6 @@ def main():
             print(f"Skipping {machine_name}: No profileURL found.")
             continue
 
-        # 3. Fetch Machine Specific JSON
         raw_url = convert_to_raw_url(profile_url)
         machine_config = fetch_json(raw_url)
 
@@ -296,7 +299,7 @@ def main():
         html_content += f"<div class='card'><div class='machine-title'>{machine_name}</div>"
         html_content += f"<div class='meta'>Board: {default_board} | Driver: {env_config['env_name']}</div>"
 
-        # 4. Iterate Variants
+        # Iterate Variants
         for variant in v_list:
             variant_name = variant['name']
             print(f"  > Building Variant: {variant_name}")
@@ -327,10 +330,8 @@ def main():
             with open("platformio.ini", "w") as f:
                 f.write(ini_content)
 
-            # Clean
             subprocess.call(["pio", "run", "-t", "clean", "-e", env_config['env_name']])
 
-            # Build
             print(f"    Starting compilation for {variant_name}...")
             return_code = subprocess.call(["pio", "run", "-e", env_config['env_name']])
 
@@ -348,14 +349,12 @@ def main():
                 build_dir = f".pio/build/{env_config['env_name']}"
                 found_hex = False
 
-                # Copy HEX
                 for f_name in os.listdir(build_dir):
                     if f_name.endswith(".hex"):
                         shutil.copy(os.path.join(build_dir, f_name), os.path.join("../", OUTPUT_DIR, filename_hex))
                         found_hex = True
                         break
 
-                # Copy INI
                 shutil.copy("platformio.ini", os.path.join("../", OUTPUT_DIR, filename_ini))
 
                 if found_hex:
