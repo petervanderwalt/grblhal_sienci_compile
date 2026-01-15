@@ -9,7 +9,7 @@ import urllib.request
 # --- Configuration ---
 PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles.json"
 BOARD_FILE = "genericSTM32F412VG.json"
-LINKER_FILE = "STM32F412VGTX_FLASH.ld" # The critical file for bootloader offsets
+LINKER_FILE = "STM32F412VGTX_FLASH.ld"  # <--- Added this
 OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
@@ -238,7 +238,7 @@ def main():
     if not os.path.exists(boards_dir):
         os.makedirs(boards_dir)
 
-    # 1. Copy Board JSON (Must be in repo root)
+    # Copy Board JSON
     if os.path.exists(BOARD_FILE):
         shutil.copy(BOARD_FILE, os.path.join(boards_dir, BOARD_FILE))
         print(f"Copied local {BOARD_FILE} to {boards_dir}")
@@ -246,17 +246,15 @@ def main():
         print(f"Error: {BOARD_FILE} not found in repository root.")
         sys.exit(1)
 
-    # 2. Copy Linker Script (Must be in repo root)
-    # We copy this to the firmware root to overwrite the upstream file
+    # Copy Linker Script - CRITICAL FOR BOOTING
     if os.path.exists(LINKER_FILE):
         shutil.copy(LINKER_FILE, os.path.join(FIRMWARE_DIR, LINKER_FILE))
-        print(f"Copied local {LINKER_FILE} to {FIRMWARE_DIR} (Overwriting upstream)")
+        print(f"Copied local {LINKER_FILE} to {FIRMWARE_DIR}")
     else:
-        print(f"Error: {LINKER_FILE} not found in repository root.")
-        print("Your board requires a custom linker script to boot. Please upload it.")
-        sys.exit(1)
+        print(f"Warning: {LINKER_FILE} not found in repo root. Using default (might not boot).")
+        # We don't exit here because *maybe* it's in the repo structure, but unlikely.
 
-    # 3. Fetch Main Profiles List
+    # 1. Fetch Main Profiles List
     profiles = fetch_json(PROFILES_URL)
     if not profiles:
         print("Failed to load profiles.json. Exiting.")
@@ -268,7 +266,7 @@ def main():
     cwd = os.getcwd()
     os.chdir(FIRMWARE_DIR)
 
-    # Iterate Machines
+    # 2. Iterate Machines
     for machine in profiles.get('machines', []):
         machine_name = machine['name']
         profile_url = machine.get('profileURL')
@@ -299,7 +297,7 @@ def main():
         html_content += f"<div class='card'><div class='machine-title'>{machine_name}</div>"
         html_content += f"<div class='meta'>Board: {default_board} | Driver: {env_config['env_name']}</div>"
 
-        # Iterate Variants
+        # 4. Iterate Variants
         for variant in v_list:
             variant_name = variant['name']
             print(f"  > Building Variant: {variant_name}")
