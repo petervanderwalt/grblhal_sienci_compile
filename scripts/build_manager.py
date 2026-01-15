@@ -4,9 +4,12 @@ import shutil
 import subprocess
 import datetime
 import sys
+import urllib.request
 
 # --- Configuration ---
-PROFILES_FILE = 'profiles.json'
+# Remote Source for Profiles
+PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles.json"
+
 OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
@@ -29,7 +32,6 @@ ENV_CONFIGS = {
     }
 }
 
-# Added boards_dir = boards so PIO looks in local folder for genericSTM32F412VG.json
 INI_HEADER_TEMPLATE = """[platformio]
 include_dir = Inc
 src_dir = Src
@@ -161,6 +163,22 @@ HTML_TEMPLATE = """
 </html>
 """
 
+def fetch_json(url):
+    """Downloads and parses JSON from a URL."""
+    try:
+        print(f"Fetching: {url}")
+        with urllib.request.urlopen(url) as response:
+            return json.loads(response.read().decode())
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        return None
+
+def convert_to_raw_url(blob_url):
+    """Converts a GitHub blob URL to a raw content URL."""
+    if "github.com" in blob_url and "blob" in blob_url:
+        return blob_url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+    return blob_url
+
 def generate_build_flags(machine_data, variant_data, base_config):
     flags = []
 
@@ -220,8 +238,11 @@ def main():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    with open(PROFILES_FILE, 'r') as f:
-        profiles = json.load(f)
+    # 1. Fetch Main Profiles List
+    profiles = fetch_json(PROFILES_URL)
+    if not profiles:
+        print("Failed to load profiles.json. Exiting.")
+        sys.exit(1)
 
     html_content = ""
     build_failures = False
@@ -229,22 +250,27 @@ def main():
     cwd = os.getcwd()
     os.chdir(FIRMWARE_DIR)
 
-    for machine in profiles['machines']:
+    # 2. Iterate Machines
+    for machine in profiles.get('machines', []):
         machine_name = machine['name']
+        profile_url = machine.get('profileURL')
+
         print(f"\n--- Processing Machine: {machine_name} ---")
 
-        if "Altmill" in machine_name:
-            json_file = "../altmill.json"
-        elif "Longmill" in machine_name:
-            json_file = "../longmill.json"
-        else:
-            print(f"Skipping unknown machine: {machine_name}")
+        if not profile_url:
+            print(f"Skipping {machine_name}: No profileURL found.")
             continue
 
-        with open(json_file, 'r') as f:
-            m_data = json.load(f)["machine"]
-            f.seek(0)
-            v_list = json.load(f)["variants"]
+        # 3. Fetch Machine Specific JSON (Convert blob to raw)
+        raw_url = convert_to_raw_url(profile_url)
+        machine_config = fetch_json(raw_url)
+
+        if not machine_config:
+            print(f"Failed to fetch config for {machine_name}")
+            continue
+
+        m_data = machine_config.get("machine", {})
+        v_list = machine_config.get("variants", [])
 
         default_board = m_data.get("default_board", "BOARD_LONGBOARD32")
         env_config = ENV_CONFIGS.get(default_board)
@@ -256,6 +282,7 @@ def main():
         html_content += f"<div class='card'><div class='machine-title'>{machine_name}</div>"
         html_content += f"<div class='meta'>Board: {default_board} | Driver: {env_config['env_name']}</div>"
 
+        # 4. Iterate Variants
         for variant in v_list:
             variant_name = variant['name']
             print(f"  > Building Variant: {variant_name}")
@@ -286,12 +313,15 @@ def main():
             with open("platformio.ini", "w") as f:
                 f.write(ini_content)
 
+            # Clean
             subprocess.run(["pio", "run", "-t", "clean", "-e", env_config['env_name']], capture_output=True)
-            result = subprocess.run(["pio", "run", "-e", env_config['env_name']], capture_output=True, text=True)
+
+            # Build (Removed capture_output=True to show logs in GitHub Action)
+            print("    Starting compilation...")
+            result = subprocess.run(["pio", "run", "-e", env_config['env_name']], text=True)
 
             if result.returncode != 0:
                 print(f"    [FAILED] Build failed for {variant_name}")
-                print(result.stderr)
                 html_content += f"<div class='variant'><strong>{variant_name}</strong>: <span style='color:red'>Build Failed</span></div>"
                 build_failures = True
             else:
@@ -322,7 +352,6 @@ def main():
 
     print("\n--- All Builds Complete ---")
 
-    # Exit with error code if any build failed so GitHub Action turns Red
     if build_failures:
         print("Error: One or more builds failed. Exiting.")
         sys.exit(1)
