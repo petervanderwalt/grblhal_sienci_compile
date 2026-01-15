@@ -40,14 +40,18 @@ jobs:
         run: |
           git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git firmware
 
+      - name: Install Custom Board Definition
+        # Required because genericSTM32F412VG is not in the default PIO registry
+        run: |
+          mkdir -p firmware/boards
+          curl -f -o firmware/boards/genericSTM32F412VG.json https://raw.githubusercontent.com/Sienci-Labs/sienciHAL/SLB_Bringup_Dev/genericSTM32F412VG.json
+
       - name: Clone Required Plugins
         run: |
           cd firmware
           mkdir -p 3rdparty
           cd 3rdparty
-          # Using Sienci-Labs fork for RGB
           git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git grblhal-rgb-plugin
-          # Using Sienci-Labs ATCI plugin
           git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git sienci-atci-plugin
 
       - name: Copy Scripts
@@ -58,8 +62,8 @@ jobs:
         run: |
           cd config
           mv ../firmware .
-          # FIXED: changed build_manager.py to build-manager.py to match your repo
-          python scripts/build-manager.py
+          # Matches the filename in scripts/ folder
+          python scripts/build_manager.py
 
       - name: Upload Artifacts (For debugging)
         uses: actions/upload-artifact@v4

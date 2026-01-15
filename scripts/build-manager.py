@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import datetime
+import sys
 
 # --- Configuration ---
 PROFILES_FILE = 'profiles.json'
@@ -28,9 +29,11 @@ ENV_CONFIGS = {
     }
 }
 
+# Added boards_dir = boards so PIO looks in local folder for genericSTM32F412VG.json
 INI_HEADER_TEMPLATE = """[platformio]
 include_dir = Inc
 src_dir = Src
+boards_dir = boards
 
 [common]
 build_flags =
@@ -221,6 +224,8 @@ def main():
         profiles = json.load(f)
 
     html_content = ""
+    build_failures = False
+
     cwd = os.getcwd()
     os.chdir(FIRMWARE_DIR)
 
@@ -288,6 +293,7 @@ def main():
                 print(f"    [FAILED] Build failed for {variant_name}")
                 print(result.stderr)
                 html_content += f"<div class='variant'><strong>{variant_name}</strong>: <span style='color:red'>Build Failed</span></div>"
+                build_failures = True
             else:
                 print(f"    [SUCCESS] Built successfully")
 
@@ -315,6 +321,11 @@ def main():
         f.write(final_html)
 
     print("\n--- All Builds Complete ---")
+
+    # Exit with error code if any build failed so GitHub Action turns Red
+    if build_failures:
+        print("Error: One or more builds failed. Exiting.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
