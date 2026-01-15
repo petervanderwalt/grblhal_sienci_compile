@@ -193,7 +193,6 @@ def generate_build_flags(machine_data, variant_data, base_config):
         "USE_HAL_DRIVER": None,
         "ETHERNET_ENABLE": 1,
         "_WIZCHIP_": 5500,
-        "STEP_PULSE_LATENCY": 1.3,
         "EEPROM_ENABLE": 128,
         "MODBUS_ENABLE": 3,
         "MODBUS_BAUDRATE": 3,
@@ -214,9 +213,10 @@ def generate_build_flags(machine_data, variant_data, base_config):
         "LWIP_HTTPD_SUPPORT_POST": 1,
         "LWIP_HTTPD_SUPPORT_WEBDAV": 1,
         "ATCI_ENABLE": 1,
-        # Critical for Booting SLB
-        "HSE_VALUE": 25000000,
-        "VECT_TAB_OFFSET": "0x8000"
+        # Updated to match local log exactly:
+        "F_CPU": "100000000L",
+        "STEP_PULSE_LATENCY": 1
+        # Removed HSE_VALUE and VECT_TAB_OFFSET to match local config
     }
 
     final_defs = {**system_flags, **combined_defs}
@@ -255,7 +255,7 @@ def main():
         shutil.copy(LINKER_FILE, os.path.join(FIRMWARE_DIR, LINKER_FILE))
         print(f"Copied local {LINKER_FILE} to {FIRMWARE_DIR}")
     else:
-        print(f"CRITICAL ERROR: {LINKER_FILE} not found in repo root. Build will likely not boot.")
+        print(f"CRITICAL ERROR: {LINKER_FILE} not found in repo root.")
         sys.exit(1)
 
     # 1. Fetch Main Profiles List
