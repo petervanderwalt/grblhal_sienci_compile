@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the repository containing your platformio.ini and scripts
+      # 1. Checkout the repository containing your platformio.ini, scripts, and board definition
       - name: Checkout Custom Config
         uses: actions/checkout@v4
 
@@ -30,15 +30,20 @@ jobs:
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Copy your custom config, scripts, and 3rdparty plugins into the cloned repo
+      # 5. Inject Configuration, Plugins, AND Custom Board Definition
       - name: Inject Configuration and Plugins
         run: |
           echo "Copying configuration files..."
           cp platformio.ini STM32F4xx/
           cp extra_script.py STM32F4xx/
 
-          # Your platformio.ini references ./3rdparty plugins.
-          # We must copy this folder from your repo to the build environment.
+          # --- FIX: Create 'boards' folder and move the JSON file there ---
+          echo "Setting up custom board definition..."
+          mkdir -p STM32F4xx/boards
+          cp genericSTM32F412VG.json STM32F4xx/boards/
+          # --------------------------------------------------------------
+
+          # Copy 3rdparty plugins if they exist
           if [ -d "3rdparty" ]; then
             echo "Copying 3rdparty plugins..."
             cp -r 3rdparty STM32F4xx/
@@ -56,6 +61,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SLB_EXT_Firmware
-          # The extra_script.py changes the name, so we use a wildcard to capture it
           path: STM32F4xx/.pio/build/slb_ext/*.hex
           if-no-files-found: error
