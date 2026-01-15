@@ -15,8 +15,6 @@ TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
 # Files to copy from repo root to firmware dir
 LOCAL_FILES = {
     "genericSTM32F412VG.json": "boards/genericSTM32F412VG.json",
-    "longboard32.c": "boards/longboard32.c",
-    "longboard32_map.h": "boards/longboard32_map.h",
     "STM32F412VGTX_FLASH.ld": "STM32F412VGTX_FLASH.ld",
     "platformio.ini": "platformio.ini"
 }
