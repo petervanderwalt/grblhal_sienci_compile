@@ -1,0 +1,18 @@
+{
+  "machines": [
+    {
+      "name": "Sienci Altmill MK2",
+      "profileURL": "https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json",
+      "URL": "https://resources.sienci.com/view/altmill/",
+      "type": "router",
+      "description": "Sienci AltMill MK2"
+    },
+    {
+      "name": "Sienci Longmill",
+      "profileURL": "https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/longmill.json",
+      "URL": "https://resources.sienci.com/view/lmmk2/",
+      "type": "router",
+      "description": "Sienci LongMill Benchtop CNC MK2.5"
+    }
+  ]
+}

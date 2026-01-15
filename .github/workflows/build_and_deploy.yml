@@ -1,0 +1,86 @@
+name: Build and Host Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '*.json'
+      - 'scripts/**'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build-firmware:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Config Repo
+        uses: actions/checkout@v4
+        with:
+          path: config
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Clone grblHAL STM32F4xx Driver
+        run: |
+          git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git firmware
+
+      - name: Clone Required Plugins
+        run: |
+          cd firmware
+          mkdir -p 3rdparty
+          cd 3rdparty
+          # Using Sienci-Labs fork for RGB
+          git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git grblhal-rgb-plugin
+          # Using Sienci-Labs ATCI plugin
+          git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git sienci-atci-plugin
+
+      - name: Copy Scripts
+        run: |
+          cp config/extra_script.py firmware/
+
+      - name: Run Build Manager
+        run: |
+          cd config
+          mv ../firmware .
+          python scripts/build_manager.py
+
+      - name: Upload Artifacts (For debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-builds
+          path: config/build_output/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: config/build_output/
+
+  deploy-pages:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build-firmware
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
