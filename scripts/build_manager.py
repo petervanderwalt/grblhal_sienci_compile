@@ -8,50 +8,10 @@ import urllib.request
 
 # --- Configuration ---
 PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles.json"
+BOARD_FILE = "genericSTM32F412VG.json"
 OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
-
-# --- Board Definition ---
-BOARD_DEFINITION = {
-  "build": {
-    "core": "stm32",
-    "cpu": "cortex-m4",
-    "extra_flags": "-DSTM32F412rx -DSTM32F4xx",
-    "f_cpu": "100000000L",
-    "mcu": "stm32f412vgt6",
-    "product_line": "STM32F412Vx",
-    "variant": "STM32F4xx/F412Z(E-G)T_F412V(E-G)T_F412R(E-G)T"
-  },
-  "connectivity": [
-    "can"
-  ],
-  "debug": {
-    "jlink_device": "STM32F412VG",
-    "openocd_target": "stm32f4x",
-    "svd_path": "STM32F412.svd"
-  },
-  "frameworks": [
-    "arduino",
-    "stm32cube",
-    "libopencm3"
-  ],
-  "name": "Generic STM32F412VG",
-  "upload": {
-    "maximum_ram_size": 262144,
-    "maximum_size": 1048576,
-    "protocol": "stlink",
-    "protocols": [
-      "jlink",
-      "stlink",
-      "blackmagic",
-      "serial",
-      "dfu"
-    ]
-  },
-  "url": "https://www.st.com/en/microcontrollers-microprocessors/stm32f412vg.html",
-  "vendor": "Generic"
-}
 
 # --- PlatformIO INI Templates ---
 ENV_CONFIGS = {
@@ -279,15 +239,18 @@ def main():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    # --- Generate Board Definition ---
+    # --- Prepare Board Definition ---
+    # Copy the local genericSTM32F412VG.json to the firmware/boards folder
     boards_dir = os.path.join(FIRMWARE_DIR, 'boards')
     if not os.path.exists(boards_dir):
         os.makedirs(boards_dir)
 
-    board_file_path = os.path.join(boards_dir, 'genericSTM32F412VG.json')
-    with open(board_file_path, 'w') as f:
-        json.dump(BOARD_DEFINITION, f, indent=2)
-    print(f"Created board definition: {board_file_path}")
+    if os.path.exists(BOARD_FILE):
+        shutil.copy(BOARD_FILE, os.path.join(boards_dir, BOARD_FILE))
+        print(f"Copied local {BOARD_FILE} to {boards_dir}")
+    else:
+        print(f"Error: {BOARD_FILE} not found in repository root.")
+        sys.exit(1)
 
     # 1. Fetch Main Profiles List
     profiles = fetch_json(PROFILES_URL)
@@ -392,7 +355,7 @@ def main():
                         found_hex = True
                         break
 
-                # Copy INI (which is currently platformio.ini in cwd)
+                # Copy INI
                 shutil.copy("platformio.ini", os.path.join("../", OUTPUT_DIR, filename_ini))
 
                 if found_hex:
