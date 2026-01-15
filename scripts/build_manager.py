@@ -8,22 +8,136 @@ import urllib.request
 
 # --- Configuration ---
 PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles.json"
+BOARD_FILE = "genericSTM32F412VG.json"
+LINKER_FILE = "STM32F412VGTX_FLASH.ld"
+STATIC_INI_FILE = "../platformio.ini" # Look in root (parent of firmware dir)
+
 OUTPUT_DIR = 'build_output'
 FIRMWARE_DIR = 'firmware'
 TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d")
 
-# Files to copy from repo root to firmware dir
-LOCAL_FILES = {
-    "genericSTM32F412VG.json": "boards/genericSTM32F412VG.json",
-    "STM32F412VGTX_FLASH.ld": "STM32F412VGTX_FLASH.ld",
-    "platformio.ini": "platformio.ini"
+# --- PlatformIO INI Templates ---
+ENV_CONFIGS = {
+    "BOARD_LONGBOARD32_EXT": {
+        "env_name": "slb_ext",
+        "board": "genericSTM32F412VG",
+        "ldscript": LINKER_FILE,
+        "usb_flags": "-D USB_SERIAL_CDC=1",
+        "extra_flags": "-D STM32F412Vx -D BOARD_LONGBOARD32_EXT"
+    },
+    "BOARD_LONGBOARD32": {
+        "env_name": "slb",
+        "board": "genericSTM32F412VG",
+        "ldscript": LINKER_FILE,
+        "usb_flags": "-D USB_SERIAL_CDC=1",
+        "extra_flags": "-D STM32F412Vx -D BOARD_LONGBOARD32"
+    }
 }
 
-# --- Environment Mapping ---
-ENV_CONFIGS = {
-    "BOARD_LONGBOARD32_EXT": "slb_ext",
-    "BOARD_LONGBOARD32": "slb"
-}
+INI_HEADER_TEMPLATE = """[platformio]
+include_dir = Inc
+src_dir = Src
+boards_dir = boards
+
+[common]
+build_flags =
+  -I .
+  -I boards
+  -I FatFs
+  -I FatFs/STM
+  -I Drivers/FATFS/Target
+  -I Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+  -I Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+  -I USB_DEVICE/App
+  -I USB_DEVICE/Target
+  -D OVERRIDE_MY_MACHINE
+  -D _USE_IOCTL=1
+  -D _USE_WRITE=1
+  -D _VOLUMES=1
+  -Wl,-u,_printf_float
+  -Wl,-u,_scanf_float
+lib_deps =
+  boards
+  bluetooth
+  grbl
+  keypad
+  laser
+  motors
+  trinamic
+  odometer
+  openpnp
+  fans
+  plugins
+  FatFs
+  sdcard
+  spindle
+  embroidery
+  Drivers/FATFS/App
+  Drivers/FATFS/Target
+  Middlewares/ST/STM32_USB_Device_Library/Core
+  Middlewares/ST/STM32_USB_Device_Library/Class
+  USB_DEVICE/App
+  USB_DEVICE/Target
+lib_extra_dirs =
+  .
+  boards
+  FatFs
+  Middlewares/ST/STM32_USB_Device_Library
+  USB_DEVICE
+
+[eth_networking]
+build_flags =
+  -I LWIP/App
+  -I LWIP/dp83848/Target
+  -I Middlewares/Third_Party/LwIP/src/include
+  -I Middlewares/Third_Party/LwIP/system
+  -I Middlewares/Third_Party/LwIP/src/include/netif
+  -I Middlewares/Third_Party/LwIP/src/include/lwip
+  -I Drivers/BSP/Components/dp83848
+lib_deps =
+   networking
+   webui
+   LWIP/App
+   LWIP/dp83848/Target
+   Middlewares/Third_Party/LwIP
+   Drivers/BSP/Components/dp83848
+
+[wiznet_networking]
+build_flags =
+  -I networking/wiznet
+  -I Middlewares/Third_Party/LwIP/src/include
+  -I Middlewares/Third_Party/LwIP/system
+  -I Middlewares/Third_Party/LwIP/src/include/netif
+  -I Middlewares/Third_Party/LwIP/src/include/lwip
+lib_deps =
+   networking
+   webui
+   Middlewares/Third_Party/LwIP
+
+[env]
+platform = ststm32
+platform_packages = framework-stm32cubef4
+framework = stm32cube
+lib_archive = no
+lib_ldf_mode = off
+extra_scripts =
+    pre:extra_script.py
+    post:extra_script.py
+grblhal_driver_version = {date_str}
+custom_prog_version = {board_id}
+custom_board_name = 'default'
+
+[env:{env_name}]
+board = {board}
+upload_protocol = dfu
+board_build.ldscript = {ldscript}
+lib_extra_dirs = ${{common.lib_extra_dirs}}
+lib_deps = ${{common.lib_deps}}
+  eeprom
+  ${{wiznet_networking.lib_deps}}
+  ./3rdparty/grblhal-rgb-plugin
+  ./3rdparty/sienci-atci-plugin
+"""
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -67,7 +181,7 @@ def convert_to_raw_url(blob_url):
         return blob_url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
     return blob_url
 
-def generate_build_flags(machine_data, variant_data):
+def generate_build_flags(machine_data, variant_data, base_config):
     flags = []
     base_defs = {**machine_data.get("default_symbols", {}),
                  **machine_data.get("setting_defaults", {}),
@@ -76,11 +190,44 @@ def generate_build_flags(machine_data, variant_data):
                     **variant_data.get("setting_defaults", {})}
     combined_defs = {**base_defs, **variant_defs}
 
-    for key, value in combined_defs.items():
+    system_flags = {
+        "WEB_BUILD": None,
+        "USE_HAL_DRIVER": None,
+        "ETHERNET_ENABLE": 1,
+        "_WIZCHIP_": 5500,
+        "EEPROM_ENABLE": 128,
+        "MODBUS_ENABLE": 3,
+        "MODBUS_BAUDRATE": 3,
+        "N_EVENTS": 4,
+        "ETH_TX_DESC_CNT": 12,
+        "TCP_MSS": 1460,
+        "TCP_SND_BUF": 5840,
+        "LWIP_NUM_NETIF_CLIENT_DATA": 2,
+        "LWIP_HTTPD_CUSTOM_FILES": 0,
+        "MEM_SIZE": 16384,
+        "LWIP_IGMP": 1,
+        "LWIP_MDNS_RESPONDER": 1,
+        "LWIP_NETIF_STATUS_CALLBACK": 1,
+        "LWIP_HTTPD_DYNAMIC_HEADERS": 1,
+        "LWIP_HTTPD_DYNAMIC_FILE_READ": 1,
+        "LWIP_HTTPD_SUPPORT_11_KEEPALIVE": 1,
+        "LWIP_HTTPD_CGI_ADV": 1,
+        "LWIP_HTTPD_SUPPORT_POST": 1,
+        "LWIP_HTTPD_SUPPORT_WEBDAV": 1,
+        "ATCI_ENABLE": 1,
+        "F_CPU": "100000000L"
+    }
+
+    final_defs = {**system_flags, **combined_defs}
+
+    for key, value in final_defs.items():
         if value is None:
             flags.append(f"-D {key}")
         else:
             flags.append(f"-D {key}={value}")
+
+    flags.append(base_config['extra_flags'])
+    flags.append(base_config['usb_flags'])
 
     return flags
 
@@ -88,34 +235,27 @@ def main():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    # --- 1. Copy Critical Local Files ---
-    print("\n--- Setup: Copying Local Files ---")
-    for filename, dest_rel_path in LOCAL_FILES.items():
-        if filename == "platformio.ini": continue # We handle this specifically later
+    # --- Prepare Board Definition ---
+    boards_dir = os.path.join(FIRMWARE_DIR, 'boards')
+    if not os.path.exists(boards_dir):
+        os.makedirs(boards_dir)
 
-        src = filename
-        dest = os.path.join(FIRMWARE_DIR, dest_rel_path)
-
-        # Ensure dest dir exists
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-
-        if os.path.exists(src):
-            shutil.copy(src, dest)
-            print(f"  OK: {src} -> {dest}")
-        else:
-            print(f"  ERROR: {src} missing in repo root.")
-            sys.exit(1)
-
-    # --- 2. Load Template platformio.ini ---
-    if not os.path.exists("platformio.ini"):
-        print("Error: platformio.ini not found in root.")
+    if os.path.exists(BOARD_FILE):
+        shutil.copy(BOARD_FILE, os.path.join(boards_dir, BOARD_FILE))
+        print(f"Copied local {BOARD_FILE} to {boards_dir}")
+    else:
+        print(f"Error: {BOARD_FILE} not found in repository root.")
         sys.exit(1)
 
-    with open("platformio.ini", "r") as f:
-        ini_template = f.read()
-    print("  OK: Loaded platformio.ini template")
+    # --- Prepare Linker Script ---
+    if os.path.exists(LINKER_FILE):
+        shutil.copy(LINKER_FILE, os.path.join(FIRMWARE_DIR, LINKER_FILE))
+        print(f"Copied local {LINKER_FILE} to {FIRMWARE_DIR}")
+    else:
+        print(f"CRITICAL ERROR: {LINKER_FILE} not found in repo root.")
+        sys.exit(1)
 
-    # --- 3. Fetch Profiles ---
+    # 1. Fetch Main Profiles List
     profiles = fetch_json(PROFILES_URL)
     if not profiles:
         print("Failed to load profiles.json. Exiting.")
@@ -127,7 +267,7 @@ def main():
     cwd = os.getcwd()
     os.chdir(FIRMWARE_DIR)
 
-    # Iterate Machines
+    # 2. Iterate Machines
     for machine in profiles.get('machines', []):
         machine_name = machine['name']
         profile_url = machine.get('profileURL')
@@ -135,69 +275,77 @@ def main():
         print(f"\n--- Processing Machine: {machine_name} ---")
 
         if not profile_url:
-            print(f"Skipping: No profileURL.")
+            print(f"Skipping {machine_name}: No profileURL found.")
             continue
 
         raw_url = convert_to_raw_url(profile_url)
         machine_config = fetch_json(raw_url)
 
         if not machine_config:
-            print(f"Failed to fetch config")
+            print(f"Failed to fetch config for {machine_name}")
             continue
 
         m_data = machine_config.get("machine", {})
         v_list = machine_config.get("variants", [])
 
         default_board = m_data.get("default_board", "BOARD_LONGBOARD32")
-        env_name = ENV_CONFIGS.get(default_board)
+        env_config = ENV_CONFIGS.get(default_board)
 
-        if not env_name:
+        if not env_config:
             print(f"Error: Unknown board type {default_board}")
             continue
 
         html_content += f"<div class='card'><div class='machine-title'>{machine_name}</div>"
-        html_content += f"<div class='meta'>Board: {default_board} | Driver: {env_name}</div>"
+        html_content += f"<div class='meta'>Board: {default_board} | Driver: {env_config['env_name']}</div>"
 
-        # Iterate Variants
+        # 4. Iterate Variants
         for variant in v_list:
             variant_name = variant['name']
             print(f"  > Building Variant: {variant_name}")
 
-            # Generate just the profile-specific flags
-            variant_flags = generate_build_flags(m_data, variant)
+            build_flags = generate_build_flags(m_data, variant, env_config)
 
-            # --- Write INI ---
-            # 1. Write the user's full template
-            # 2. Append a new section that extends the existing environment
-            #    This effectively adds the new flags to the existing ones.
+            ini_content = INI_HEADER_TEMPLATE.format(
+                date_str=TIMESTAMP,
+                board_id=env_config['env_name'].upper(),
+                env_name=env_config['env_name'],
+                board=env_config['board'],
+                ldscript=LINKER_FILE
+            )
+
+            ini_content += "\nbuild_flags = \n"
+
+            includes = [
+                "${common.build_flags}",
+                "${wiznet_networking.build_flags}",
+                "-I ./3rdparty/grblhal-rgb-plugin",
+                "-I ./3rdparty/sienci-atci-plugin"
+            ]
+            for inc in includes:
+                ini_content += f"  {inc}\n"
+            for flag in build_flags:
+                ini_content += f"  {flag}\n"
+
             with open("platformio.ini", "w") as f:
-                f.write(ini_template)
-                f.write("\n\n# --- AUTOMATED PROFILE INJECTION ---\n")
-                f.write(f"[env:{env_name}]\n")
-                f.write(f"build_flags = \n")
-                f.write(f"  ${{env:{env_name}.build_flags}}\n") # Inherit existing flags
-                for flag in variant_flags:
-                    f.write(f"  {flag}\n")
+                f.write(ini_content)
 
-            # Clean
-            subprocess.call(["pio", "run", "-t", "clean", "-e", env_name])
-
-            # Build
-            print(f"    Starting compilation...")
-            return_code = subprocess.call(["pio", "run", "-e", env_name])
+            # Clean & Build
+            subprocess.call(["pio", "run", "-t", "clean", "-e", env_config['env_name']])
+            print(f"    Starting compilation for {variant_name}...")
+            return_code = subprocess.call(["pio", "run", "-e", env_config['env_name']])
 
             if return_code != 0:
-                print(f"    [FAILED] Build failed")
+                print(f"    [FAILED] Build failed for {variant_name}")
                 html_content += f"<div class='variant'><strong>{variant_name}</strong>: <span style='color:red'>Build Failed</span></div>"
                 build_failures = True
             else:
                 print(f"    [SUCCESS] Built successfully")
 
                 safe_v_name = "".join(x for x in variant_name if x.isalnum() or x in " -_").replace(" ", "_")
-                filename_hex = f"grblhal_{env_name}_{safe_v_name}_{TIMESTAMP}.hex"
-                filename_ini = f"grblhal_{env_name}_{safe_v_name}_{TIMESTAMP}.ini"
+                filename_hex = f"grblhal_{env_config['env_name']}_{safe_v_name}_{TIMESTAMP}.hex"
+                filename_ini = f"grblhal_{env_config['env_name']}_{safe_v_name}_{TIMESTAMP}.ini"
 
-                build_dir = f".pio/build/{env_name}"
+                build_dir = f".pio/build/{env_config['env_name']}"
                 found_hex = False
 
                 for f_name in os.listdir(build_dir):
@@ -221,6 +369,56 @@ def main():
 
         html_content += "</div>"
 
+    # --- STATIC TEST BUILD ---
+    # This block copies the user's platformio.ini from the root and builds it directly
+    print("\n--- Running Static Config Test ---")
+    if os.path.exists(STATIC_INI_FILE):
+        print(f"Found {STATIC_INI_FILE}, running build...")
+
+        # Overwrite platformio.ini with the static one
+        shutil.copy(STATIC_INI_FILE, "platformio.ini")
+
+        target_env = "slb_ext" # Assuming this is the main target in your static file
+
+        subprocess.call(["pio", "run", "-t", "clean", "-e", target_env])
+        return_code = subprocess.call(["pio", "run", "-e", target_env])
+
+        if return_code == 0:
+            print("    [SUCCESS] Static build passed")
+            filename_hex = f"grblhal_STATIC_TEST_{TIMESTAMP}.hex"
+            build_dir = f".pio/build/{target_env}"
+            found_hex = False
+
+            for f_name in os.listdir(build_dir):
+                if f_name.endswith(".hex"):
+                    shutil.copy(os.path.join(build_dir, f_name), os.path.join("../", OUTPUT_DIR, filename_hex))
+                    found_hex = True
+                    break
+
+            if found_hex:
+                html_content += f"""
+                <div class='card'>
+                    <div class='machine-title'>DEBUG: Static Config Test</div>
+                    <div class='meta'>Built using repository platformio.ini directly</div>
+                    <div class='variant'>
+                        <strong>Static Build</strong><br>
+                        <a href='{filename_hex}' class='btn' download>Download .HEX</a>
+                    </div>
+                </div>
+                """
+        else:
+            print("    [FAILED] Static build failed")
+            html_content += """
+            <div class='card'>
+                <div class='machine-title'>DEBUG: Static Config Test</div>
+                <div class='variant'><span style='color:red'>Build Failed</span></div>
+            </div>
+            """
+            build_failures = True
+    else:
+        print(f"Skipping static test: {STATIC_INI_FILE} not found")
+
+    # --- Finalize ---
     os.chdir(cwd)
     final_html = HTML_TEMPLATE.format(date=TIMESTAMP, content=html_content)
     with open(os.path.join(OUTPUT_DIR, "index.html"), "w") as f:
