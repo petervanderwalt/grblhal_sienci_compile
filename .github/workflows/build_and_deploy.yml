@@ -1,65 +1,232 @@
-name: Build GrblHAL Firmware
+name: Build GrblHAL Firmware & Pages
 
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
+# Grant permission to publish to GitHub Pages
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the repository containing your platformio.ini, scripts, and board definition
-      - name: Checkout Custom Config
+      # 1. Checkout your repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Setup Python (Required for PlatformIO)
+      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      - name: Install Python Requests
+        run: pip install requests
+
       # 3. Install PlatformIO
       - name: Install PlatformIO
         run: pip install -U platformio
 
-      # 4. Clone the specific grblHAL STM32F4xx repository
+      # 4. Clone GrblHAL Driver
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Inject Configuration, Plugins, AND Custom Board Definition
-      - name: Inject Configuration and Plugins
+      # 5. Fix/Install Plugins (Includes RGB Fix)
+      - name: Install Plugins
         run: |
-          echo "Copying configuration files..."
+            # Copy 3rdparty plugins if they exist
+            if [ -d "3rdparty" ]; then
+              echo "Copying 3rdparty plugins..."
+              cp -r 3rdparty STM32F4xx/
+            else
+              echo "::warning:: '3rdparty' folder not found! Build will likely fail due to missing plugins."
+            fi
+
+
+      # 6. Inject Configuration (INI, Extra Script, Boards, Plugins)
+      - name: Inject Configuration
+        run: |
           cp platformio.ini STM32F4xx/
           cp extra_script.py STM32F4xx/
 
-          # --- FIX: Create 'boards' folder and move the JSON file there ---
-          echo "Setting up custom board definition..."
+          # Setup custom board definition
           mkdir -p STM32F4xx/boards
+          # Check if json exists in root, otherwise copy from repo if you have it
           cp genericSTM32F412VG.json STM32F4xx/boards/
-          # --------------------------------------------------------------
 
-          # Copy 3rdparty plugins if they exist
+          # Copy 3rdparty plugins
           if [ -d "3rdparty" ]; then
-            echo "Copying 3rdparty plugins..."
             cp -r 3rdparty STM32F4xx/
-          else
-            echo "::warning:: '3rdparty' folder not found! Build will likely fail due to missing plugins."
           fi
 
-      # 6. Run PlatformIO to compile
-      - name: Compile Firmware
+      # 7. GENERATE DYNAMIC CONFIGURATIONS (Python Script)
+      - name: Generate Dynamic PlatformIO Environments
         working-directory: STM32F4xx
-        run: pio run -e slb_ext
+        run: |
+          cat <<EOF > generate_config.py
+          import requests
+          import json
+          import re
+          import os
 
-      # 7. Upload the resulting HEX file as an artifact
-      - name: Upload Artifact
+          # Configuration
+          PROFILES_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/refs/heads/main/profiles.json"
+          PIO_FILE = "platformio.ini"
+
+          def normalize_name(name):
+              return re.sub(r'[^a-zA-Z0-9]', '_', name).lower()
+
+          def dict_to_flags(d):
+              flags = []
+              for k, v in d.items():
+                  # Handle string values by quoting them
+                  if isinstance(v, str):
+                      flags.append(f"-D {k}=\\\\\"{v}\\\\\"")
+                  else:
+                      flags.append(f"-D {k}={v}")
+              return "\n  ".join(flags)
+
+          try:
+              print(f"Fetching profiles from {PROFILES_URL}...")
+              profiles_data = requests.get(PROFILES_URL).json()
+
+              new_envs = ""
+
+              for profile_link in profiles_data.get('profiles', []):
+                  print(f"Processing profile: {profile_link}")
+                  machine_json = requests.get(profile_link).json()
+
+                  # Machine Level Defaults
+                  mach_syms = machine_json.get('machine', {}).get('default_symbols', {})
+                  mach_sets = machine_json.get('machine', {}).get('setting_defaults', {})
+
+                  # Process Variants
+                  for variant in machine_json.get('variants', []):
+                      var_name = variant.get('name', 'Unknown')
+                      clean_id = normalize_name(var_name)
+
+                      # Variant Level Overrides
+                      var_syms = variant.get('default_symbols', {})
+                      var_sets = variant.get('setting_defaults', {})
+
+                      # Merge (Variant overrides Machine)
+                      final_defs = {**mach_syms, **mach_sets, **var_syms, **var_sets}
+
+                      build_flags = dict_to_flags(final_defs)
+
+                      # Append to INI string
+                      # We extend slb_ext to inherit the board settings,
+                      # then append specific flags.
+                      # We set custom_prog_version to the Variant Name for the renamer script
+                      env_block = f"""
+          [env:{clean_id}]
+          extends = env:slb_ext
+          custom_prog_version = {clean_id}
+          build_flags =
+            \${env:slb_ext.build_flags}
+            {build_flags}
+          """
+                      new_envs += env_block
+                      print(f"Generated config for: {var_name} ({clean_id})")
+
+              # Append to platformio.ini
+              with open(PIO_FILE, "a") as f:
+                  f.write(new_envs)
+
+          except Exception as e:
+              print(f"Error: {e}")
+              exit(1)
+          EOF
+
+          python generate_config.py
+
+      # 8. Compile EVERYTHING
+      - name: Compile All Variants
+        working-directory: STM32F4xx
+        run: |
+          # 1. Build the Static Default
+          echo "Building Static Default (slb_ext)..."
+          pio run -e slb_ext
+
+          # 2. Build all other environments found in the file
+          # We parse platformio.ini to find all [env:...] except slb_ext (already built)
+          # grep returns [env:name], we clean it up
+          ENVS=$(grep "^\[env:" platformio.ini | sed 's/\[env://;s/\]//' | grep -v "slb_ext")
+
+          for ENV in $ENVS; do
+            echo "Building Dynamic Variant: $ENV"
+            pio run -e $ENV
+          done
+
+      # 9. Prepare Output Folder for Website
+      - name: Collect Artifacts & Generate Website
+        working-directory: STM32F4xx
+        run: |
+          mkdir -p public_html
+
+          # Find all HEX files and copy them to public_html
+          find .pio/build -name "*.hex" -exec cp {} public_html/ \;
+
+          cd public_html
+          ls -lh
+
+          # Generate index.html
+          cat <<EOF > index.html
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>GrblHAL Firmware Downloads</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f4f4; }
+                  .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+                  h1 { color: #333; border-bottom: 2px solid #ddd; padding-bottom: 10px; }
+                  ul { list-style: none; padding: 0; }
+                  li { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+                  li:last-child { border-bottom: none; }
+                  a { text-decoration: none; background: #007bff; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; }
+                  a:hover { background: #0056b3; }
+                  .filename { font-family: monospace; font-size: 1.1em; color: #555; }
+                  .timestamp { font-size: 0.8em; color: #999; margin-top: 20px; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>GrblHAL Firmware Downloads</h1>
+                  <p>Below are the compiled firmware binaries for the Standard build and all detected profiles.</p>
+                  <ul>
+          EOF
+
+          # Add list items for every hex file
+          for file in *.hex; do
+            echo "            <li><span class=\"filename\">$file</span> <a href=\"$file\" download>Download</a></li>" >> index.html
+          done
+
+          cat <<EOF >> index.html
+                  </ul>
+                  <div class="timestamp">Generated on $(date)</div>
+              </div>
+          </body>
+          </html>
+          EOF
+
+      # 10. Upload Artifacts to GitHub Actions Run (for backup/direct access)
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SLB_EXT_Firmware
-          path: STM32F4xx/.pio/build/slb_ext/*.hex
-          if-no-files-found: error
+          name: Firmware_Binaries
+          path: STM32F4xx/public_html/*.hex
+
+      # 11. Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: STM32F4xx/public_html
