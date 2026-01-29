@@ -47,6 +47,7 @@ jobs:
       - name: Generate and Log PlatformIO Config
         run: |
           python generate_pio_config.py
+          cat platformio.ini
           cp platformio.ini STM32F4xx/
 
       - name: Compile All Variants
