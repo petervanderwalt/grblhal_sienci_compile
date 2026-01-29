@@ -12,7 +12,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-# The STATIC_HEADER remains exactly as your working file
+# Cleaned up to match your working file structure
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -37,7 +37,6 @@ build_flags =
   -Wl,-u,_printf_float
   -Wl,-u,_scanf_float
 lib_deps =
-  boards
   bluetooth
   grbl
   keypad
@@ -71,6 +70,8 @@ build_flags =
   -I Middlewares/Third_Party/LwIP/system
   -I Middlewares/Third_Party/LwIP/src/include/netif
   -I Middlewares/Third_Party/LwIP/src/include/lwip
+  -D _WIZCHIP_=5500
+  -D ETHERNET_ENABLE=1
 lib_deps =
    networking
    webui
@@ -103,21 +104,22 @@ def download_profile(url):
         return json.loads(resp.read().decode())
 
 def format_build_flags(defines):
-    """Formats dict into -D KEY=VALUE with leading spaces."""
     lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
+        # Map SIENCI_ATCI from JSON to ATCI_ENABLE for the code
+        key = "ATCI_ENABLE" if k == "SIENCI_ATCI" else k
+
         if isinstance(v, bool):
-            if v: lines.append(f"  -D {k}")
+            if v: lines.append(f"  -D {key}")
         else:
-            lines.append(f"  -D {k}={v}")
+            lines.append(f"  -D {key}={v}")
     return "\n".join(lines)
 
 def generate_env(variant, global_defines):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
 
-    # Merge levels: Global Machine Defaults -> Variant Symbols -> Variant Settings
     merged_defines = global_defines.copy()
     merged_defines.update(variant.get("default_symbols", {}))
     merged_defines.update(variant.get("setting_defaults", {}))
@@ -139,6 +141,16 @@ build_flags =
   -D BOARD_LONGBOARD32_EXT
   -D USE_HAL_DRIVER
   -D STM32F412Vx
+  -D USB_SERIAL_CDC=1
+  -D RTC_ENABLE=1
+  -D STEP_PULSE_LATENCY=1.3
+  -D ETH_TX_DESC_CNT=12
+  -D TCP_MSS=1460
+  -D TCP_SND_BUF=5840
+  -D LWIP_HTTPD_CGI_ADV=1
+  -D LWIP_HTTPD_SUPPORT_POST=1
+  -D LWIP_HTTPD_SUPPORT_WEBDAV=1
+  -D LWIP_HTTPD_DYNAMIC_HEADERS=1
 {v_flags}
 
 lib_deps =
@@ -152,8 +164,6 @@ lib_extra_dirs = ${{common.lib_extra_dirs}}
 
 def main():
     profile = download_profile(PROFILE_URL)
-
-    # Extract Global Data
     machine = profile.get("machine", {})
     global_defines = {
         **machine.get("default_symbols", {}),
@@ -166,13 +176,13 @@ def main():
 
     env_names = [sanitize_env_name(v["name"]) for v in variants]
 
-    # Build content
     content = STATIC_HEADER.format(default_envs=", ".join(env_names)).strip() + "\n"
     for variant in variants:
         content += generate_env(variant, global_defines)
 
     OUTPUT_INI.write_text(content)
-    print(f"Generated {OUTPUT_INI} successfully with {len(variants)} variants.")
+    print(content) # Log to console
+    print(f"\\nGenerated {OUTPUT_INI} successfully with {len(variants)} variants.")
 
 if __name__ == "__main__":
     main()
