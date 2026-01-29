@@ -12,11 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the repository containing your platformio.ini, scripts, and board definition
-      - name: Checkout Custom Config
+      # 1. Checkout this repo (contains generate_pio_config.py)
+      - name: Checkout Config Repo
         uses: actions/checkout@v4
 
-      # 2. Setup Python (Required for PlatformIO)
+      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -26,40 +26,39 @@ jobs:
       - name: Install PlatformIO
         run: pip install -U platformio
 
-      # 4. Clone the specific grblHAL STM32F4xx repository
+      # 4. Clone grblHAL STM32F4xx driver
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Inject Configuration, Plugins, AND Custom Board Definition
-      - name: Inject Configuration and Plugins
+      # 5. Generate platformio.ini from profile
+      - name: Generate PlatformIO Config
         run: |
-          echo "Copying configuration files..."
+          python generate_pio_config.py
           cp platformio.ini STM32F4xx/
-          cp extra_script.py STM32F4xx/
 
-          # --- FIX: Create 'boards' folder and move the JSON file there ---
-          echo "Setting up custom board definition..."
+      # 6. Inject board + extras
+      - name: Inject Board Definitions and Plugins
+        run: |
           mkdir -p STM32F4xx/boards
           cp genericSTM32F412VG.json STM32F4xx/boards/
-          # --------------------------------------------------------------
 
-          # Copy 3rdparty plugins if they exist
           if [ -d "3rdparty" ]; then
-            echo "Copying 3rdparty plugins..."
             cp -r 3rdparty STM32F4xx/
-          else
-            echo "::warning:: '3rdparty' folder not found! Build will likely fail due to missing plugins."
           fi
 
-      # 6. Run PlatformIO to compile
-      - name: Compile Firmware
-        working-directory: STM32F4xx
-        run: pio run -e slb_ext
+          if [ -f "extra_script.py" ]; then
+            cp extra_script.py STM32F4xx/
+          fi
 
-      # 7. Upload the resulting HEX file as an artifact
-      - name: Upload Artifact
+      # 7. Build ALL environments
+      - name: Compile Firmware (all variants)
+        working-directory: STM32F4xx
+        run: pio run
+
+      # 8. Upload all firmware outputs
+      - name: Upload Firmware Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SLB_EXT_Firmware
-          path: STM32F4xx/.pio/build/slb_ext/*.hex
+          name: grblHAL-altmill-firmware
+          path: STM32F4xx/.pio/build/**/firmware.*
           if-no-files-found: error
