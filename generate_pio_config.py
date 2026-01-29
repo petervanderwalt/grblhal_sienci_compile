@@ -19,7 +19,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-BASE_ENV = textwrap.dedent("""
+BASE_ENV = """
 [platformio]
 default_envs = {default_envs}
 
@@ -29,6 +29,9 @@ framework = stm32cube
 lib_archive = no
 lib_ldf_mode = off
 
+; grblHAL STM32 layout
+src_dir = Src
+include_dir = Inc
 """).strip()
 
 def sanitize_env_name(name: str) -> str:
@@ -66,6 +69,7 @@ def generate_env(variant):
     [env:{env_name}]
     board = genericSTM32F412VG
     upload_protocol = dfu
+    board_build.ldscript = STM32F412VGTX_FLASH.ld
 
     build_flags =
         ${{env.build_flags}}
