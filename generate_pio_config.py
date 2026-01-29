@@ -73,7 +73,6 @@ def generate_env(variant):
     """).strip()
 
 
-
 def main(build=False):
     profile = download_profile(PROFILE_URL)
 
@@ -81,7 +80,7 @@ def main(build=False):
     if not variants:
         raise RuntimeError("No variants found in profile")
 
-        env_names = [sanitize_env_name(v["name"]) for v in variants]
+    env_names = [sanitize_env_name(v["name"]) for v in variants]
 
     sections = [
         BASE_ENV.format(default_envs=", ".join(env_names))
@@ -97,6 +96,7 @@ def main(build=False):
         for env in env_names:
             print(f"\n=== Building {env} ===")
             subprocess.check_call(["pio", "run", "-e", env])
+
 
 
 if __name__ == "__main__":
