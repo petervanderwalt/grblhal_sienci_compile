@@ -48,21 +48,21 @@
                         <p id="status" class="mb-2 small">Disconnected</p>
 
                         <div class="d-grid gap-2">
-                            <!-- Existing DFU Connection Button -->
-                            <button id="connect" class="btn btn-primary btn-sm">
-                                <i class="bi bi-usb-drive-fill"></i> Select DFU Device
-                            </button>
 
-                            <!-- NEW: WebSerial DFU Trigger -->
                             <button id="serial-dfu" class="btn btn-outline-dark btn-sm">
                                 <i class="bi bi-terminal-fill"></i> Reboot Board to DFU Mode
+                            </button>
+                            <div class="mt-2 small text-muted fst-italic" style="font-size: 0.7rem;">
+                                If board is in "Normal" mode, use the Reboot button first.
+                            </div>
+
+                            <button id="connect" class="btn btn-outline-dark btn-sm">
+                                <i class="bi bi-usb-drive-fill"></i> Select DFU/Bootloader Device
                             </button>
 
                             <button id="detach" class="btn btn-secondary btn-sm" style="display: none;">Switch to DFU Mode</button>
                         </div>
-                        <div class="mt-2 small text-muted fst-italic" style="font-size: 0.7rem;">
-                            If board is in "Normal" mode, use the Reboot button first.
-                        </div>
+
                     </div>
                 </div>
 
@@ -82,7 +82,8 @@
                 <!-- 3. Manual Firmware Flash -->
                 <div class="card shadow-sm">
                     <div class="card-body">
-                        <h6 class="card-title border-bottom pb-2 fw-bold">3. Manual Flash</h6>
+                        <h6 class="card-title border-bottom pb-2 fw-bold">3. Flash</h6>
+                        Select Automated Build files above or upload own HEX file here:
                         <form id="configForm" onsubmit="return false;" class="d-flex flex-column gap-2">
                             <label for="firmwareFile" id="drop-zone" class="drop-zone">
                                 <input type="file" id="firmwareFile" name="file" accept=".bin,.hex" hidden>
@@ -225,8 +226,8 @@
                         <span class="build-name">${file.name}</span>
                         <div class="build-meta mb-2"><i class="bi bi-clock"></i> ${date}</div>
                         <div class="d-flex gap-1">
-                            <button class="btn btn-primary btn-sm py-0 px-2" onclick="loadBuildIntoFlasher('${file.path}', '${file.name}')">Load</button>
-                            <a href="${file.path}" class="btn btn-outline-secondary btn-sm py-0 px-2" download><i class="bi bi-download"></i></a>
+                            <button class="btn btn-outline-dark btn-sm py-0 px-2" onclick="loadBuildIntoFlasher('${file.path}', '${file.name}')">Use this firmware in Flashing Tool</button>
+                            <a href="${file.path}" class="btn btn-outline-dark btn-sm py-0 px-2" download><i class="bi bi-download"></i>Download HEX</a>
                         </div>
                     `;
                     list.appendChild(item);
