@@ -55,14 +55,35 @@ jobs:
         working-directory: STM32F4xx
         run: pio run
 
-      # 8. Upload all firmware outputs
-      - name: Upload Firmware Artifacts
-        uses: actions/upload-artifact@v4
+      # 8. Prepare Web Directory
+      - name: Prepare Web Directory
+        run: |
+          # Create a 'public' folder to serve as the website root
+          mkdir -p public/firmware
+
+          # Copy the compiled binaries to the public/firmware folder
+          # We use find to locate them in the deep PIO structure and copy them out
+          find STM32F4xx/.pio/build -name "*.bin" -exec cp {} public/firmware/ \;
+          find STM32F4xx/.pio/build -name "*.hex" -exec cp {} public/firmware/ \;
+
+          # Copy the web interface HTML (assuming you created it locally)
+          # If you don't have this file yet, we create a placeholder
+          if [ -f "web_interface/index.html" ]; then
+            cp web_interface/index.html public/
+          else
+            echo "<html><body><h1>Firmware Repository</h1><p>See /firmware_manifest.json for data</p></body></html>" > public/index.html
+          fi
+
+      # 9. Generate JSON Manifest
+      - name: Generate JSON Manifest
+        run: python generate_manifest.py
+
+
+      # 10. Deploy
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          name: grblHAL-altmill-firmware
-          # Update path to find ANY .bin, .hex, or .elf file, not just 'firmware.*'
-          path: |
-            STM32F4xx/.pio/build/**/*.bin
-            STM32F4xx/.pio/build/**/*.hex
-            STM32F4xx/.pio/build/**/*.elf
-          if-no-files-found: error
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          # This keeps the history clean, essentially publishing only the latest build
+          force_orphan: true
