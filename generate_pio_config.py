@@ -8,6 +8,10 @@ from pathlib import Path
 
 import urllib.request
 
+import re
+
+
+
 PROFILE_URL = (
     "https://raw.githubusercontent.com/Sienci-Labs/"
     "grblhal-profiles/main/profiles/altmill.json"
@@ -27,6 +31,12 @@ lib_ldf_mode = off
 
 """).strip()
 
+def sanitize_env_name(name: str) -> str:
+    name = name.lower()
+    name = re.sub(r"[()]", "", name)
+    name = re.sub(r"[^a-z0-9]+", "_", name)
+    name = re.sub(r"_+", "_", name)
+    return name.strip("_")
 
 def download_profile(url):
     with urllib.request.urlopen(url) as resp:
@@ -45,13 +55,15 @@ def format_build_flags(defines):
 
 
 def generate_env(variant):
-    name = variant["name"]
+    display_name = variant["name"]
+    env_name = sanitize_env_name(display_name)
     defines = variant.get("defines", {})
 
     build_flags = format_build_flags(defines)
 
     return textwrap.dedent(f"""
-    [env:{name}]
+    ; {display_name}
+    [env:{env_name}]
     board = genericSTM32F412VG
     upload_protocol = dfu
 
@@ -61,6 +73,7 @@ def generate_env(variant):
     """).strip()
 
 
+
 def main(build=False):
     profile = download_profile(PROFILE_URL)
 
@@ -68,7 +81,7 @@ def main(build=False):
     if not variants:
         raise RuntimeError("No variants found in profile")
 
-    env_names = [v["name"] for v in variants]
+        env_names = [sanitize_env_name(v["name"]) for v in variants]
 
     sections = [
         BASE_ENV.format(default_envs=", ".join(env_names))
