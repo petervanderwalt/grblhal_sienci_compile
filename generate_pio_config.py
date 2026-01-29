@@ -12,7 +12,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-# MATCHING YOUR WORKING [common], [wiznet], and [env] EXACTLY
+# The STATIC_HEADER remains exactly as your working file
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -104,18 +104,12 @@ def download_profile(url):
         return json.loads(resp.read().decode())
 
 def format_build_flags(defines):
-    """Formats dict into -D KEY=VALUE with leading spaces and escaped quotes for character literals."""
+    """Formats dict into -D KEY=VALUE with leading spaces."""
     lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
         if isinstance(v, bool):
-            if v:
-                lines.append(f"  -D {k}")
-        elif isinstance(v, str) and v.startswith("'") and v.endswith("'"):
-            # CRITICAL FIX: GrblHAL character literals (like 'A') need escaped quotes
-            # This turns "'A'" in JSON into "\'A\'" in the ini file
-            char = v[1:-1]
-            lines.append(f"  -D {k}=\\'{char}\\'")
+            if v: lines.append(f"  -D {k}")
         else:
             lines.append(f"  -D {k}={v}")
     return "\n".join(lines)
@@ -124,7 +118,7 @@ def generate_env(variant, global_defines):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
 
-    # Deep merge: Machine Defaults -> Variant Symbols -> Variant Settings
+    # Merge levels: Global Machine Defaults -> Variant Symbols -> Variant Settings
     merged_defines = global_defines.copy()
     merged_defines.update(variant.get("default_symbols", {}))
     merged_defines.update(variant.get("setting_defaults", {}))
@@ -160,8 +154,8 @@ lib_extra_dirs = ${{common.lib_extra_dirs}}
 def main():
     profile = download_profile(PROFILE_URL)
 
+    # Extract Global Data
     machine = profile.get("machine", {})
-    # Pull both machine-level defaults
     global_defines = {
         **machine.get("default_symbols", {}),
         **machine.get("setting_defaults", {})
@@ -173,10 +167,8 @@ def main():
 
     env_names = [sanitize_env_name(v["name"]) for v in variants]
 
-    # Format Header
+    # Build content
     content = STATIC_HEADER.format(default_envs=", ".join(env_names)).strip() + "\n"
-
-    # Append Variants
     for variant in variants:
         content += generate_env(variant, global_defines)
 
