@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+
+import json
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+import urllib.request
+
+PROFILE_URL = (
+    "https://raw.githubusercontent.com/Sienci-Labs/"
+    "grblhal-profiles/main/profiles/altmill.json"
+)
+
+OUTPUT_INI = Path("platformio.ini")
+
+BASE_ENV = textwrap.dedent("""
+[platformio]
+default_envs = {default_envs}
+
+[env]
+platform = ststm32
+framework = stm32cube
+lib_archive = no
+lib_ldf_mode = off
+
+""").strip()
+
+
+def download_profile(url):
+    with urllib.request.urlopen(url) as resp:
+        return json.loads(resp.read().decode())
+
+
+def format_build_flags(defines):
+    flags = []
+    for k, v in defines.items():
+        if isinstance(v, bool):
+            if v:
+                flags.append(f"-D{k}")
+        else:
+            flags.append(f"-D{k}={v}")
+    return "\n    ".join(flags)
+
+
+def generate_env(variant):
+    name = variant["name"]
+    defines = variant.get("defines", {})
+
+    build_flags = format_build_flags(defines)
+
+    return textwrap.dedent(f"""
+    [env:{name}]
+    board = genericSTM32F412VG
+    upload_protocol = dfu
+
+    build_flags =
+        ${{env.build_flags}}
+        {build_flags}
+    """).strip()
+
+
+def main(build=False):
+    profile = download_profile(PROFILE_URL)
+
+    variants = profile.get("variants")
+    if not variants:
+        raise RuntimeError("No variants found in profile")
+
+    env_names = [v["name"] for v in variants]
+
+    sections = [
+        BASE_ENV.format(default_envs=", ".join(env_names))
+    ]
+
+    for variant in variants:
+        sections.append(generate_env(variant))
+
+    OUTPUT_INI.write_text("\n\n".join(sections))
+    print(f"✔ Generated {OUTPUT_INI}")
+
+    if build:
+        for env in env_names:
+            print(f"\n=== Building {env} ===")
+            subprocess.check_call(["pio", "run", "-e", env])
+
+
+if __name__ == "__main__":
+    build_flag = "--build" in sys.argv
+    main(build=build_flag)
