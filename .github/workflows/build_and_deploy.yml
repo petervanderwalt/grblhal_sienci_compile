@@ -7,305 +7,59 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pages: write
-  id-token: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      # 1. Checkout the repository containing your platformio.ini, scripts, and board definition
+      - name: Checkout Custom Config
         uses: actions/checkout@v4
 
+      # 2. Setup Python (Required for PlatformIO)
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Python Dependencies
-        run: pip install -U platformio requests
+      # 3. Install PlatformIO
+      - name: Install PlatformIO
+        run: pip install -U platformio
 
+      # 4. Clone the specific grblHAL STM32F4xx repository
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      - name: Install Plugins
+      # 5. Inject Configuration, Plugins, AND Custom Board Definition
+      - name: Inject Configuration and Plugins
         run: |
-          mkdir -p STM32F4xx/3rdparty
-          cd STM32F4xx/3rdparty
-          git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git
-          git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
+          echo "Copying configuration files..."
+          cp platformio.ini STM32F4xx/
+          cp extra_script.py STM32F4xx/
 
-      # --- FIXED STEP: Generates the Python script avoiding GH Actions syntax collision ---
-      - name: Create Config Generator Script
-        run: |
-          cat << 'EOF' > generate_pio_config.py
-          import requests
-          import json
-          import os
-          import sys
-
-          PROFILE_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/refs/heads/main/profiles/altmill.json"
-
-          def generate_config():
-              print(f"Fetching profile from {PROFILE_URL}...")
-              try:
-                  response = requests.get(PROFILE_URL)
-                  response.raise_for_status()
-                  profile_data = response.json()
-              except Exception as e:
-                  print(f"Failed to fetch profile: {e}")
-                  sys.exit(1)
-
-              ignore_keys = ['info', 'version', 'name', 'description']
-              json_flags = []
-
-              for key, value in profile_data.items():
-                  if key not in ignore_keys:
-                      if value is True:
-                          json_flags.append(f"-D{key}")
-                      elif value is False:
-                          pass
-                      elif isinstance(value, str):
-                          json_flags.append(f'-D{key}=\\"{value}\\"')
-                      else:
-                          json_flags.append(f"-D{key}={value}")
-
-              json_flags_str = "\n    ".join(json_flags)
-
-              # --- FIX FOR GITHUB ACTIONS ---
-              # We construct the PIO variables by splitting the strings.
-              # This prevents GitHub Actions from trying to parse ${{...}}
-
-              # Result: ${common.lib_deps}
-              pio_c_deps = "${" + "common.lib_deps}"
-              pio_w_deps = "${" + "wiznet_networking.lib_deps}"
-              pio_c_flags = "${" + "common.build_flags}"
-              pio_w_flags = "${" + "wiznet_networking.build_flags}"
-              pio_c_extra = "${" + "common.lib_extra_dirs}"
-
-              ini_template = f"""
-          [platformio]
-          include_dir = Inc
-          src_dir = Src
-          boards_dir = boards
-
-          [common]
-          build_flags =
-            -I .
-            -I boards
-            -I FatFs
-            -I FatFs/STM
-            -I Drivers/FATFS/Target
-            -I Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
-            -I Middlewares/ST/STM32_USB_Device_Library/Core/Inc
-            -I USB_DEVICE/App
-            -I USB_DEVICE/Target
-            -D OVERRIDE_MY_MACHINE
-            -D _USE_IOCTL=1
-            -D _USE_WRITE=1
-            -D _VOLUMES=1
-            -Wl,-u,_printf_float
-            -Wl,-u,_scanf_float
-          lib_deps =
-            boards
-            bluetooth
-            grbl
-            keypad
-            laser
-            motors
-            trinamic
-            odometer
-            openpnp
-            fans
-            plugins
-            FatFs
-            sdcard
-            spindle
-            embroidery
-            Drivers/FATFS/App
-            Drivers/FATFS/Target
-            Middlewares/ST/STM32_USB_Device_Library/Core
-            Middlewares/ST/STM32_USB_Device_Library/Class
-            USB_DEVICE/App
-            USB_DEVICE/Target
-          lib_extra_dirs =
-            .
-            boards
-            FatFs
-            Middlewares/ST/STM32_USB_Device_Library
-            USB_DEVICE
-
-          [eth_networking]
-          build_flags =
-            -I LWIP/App
-            -I LWIP/dp83848/Target
-            -I Middlewares/Third_Party/LwIP/src/include
-            -I Middlewares/Third_Party/LwIP/system
-            -I Middlewares/Third_Party/LwIP/src/include/netif
-            -I Middlewares/Third_Party/LwIP/src/include/lwip
-            -I Drivers/BSP/Components/dp83848
-          lib_deps =
-             networking
-             webui
-             LWIP/App
-             LWIP/dp83848/Target
-             Middlewares/Third_Party/LwIP
-             Drivers/BSP/Components/dp83848
-          lib_extra_dirs =
-
-          [wiznet_networking]
-          build_flags =
-            -I networking/wiznet
-            -I Middlewares/Third_Party/LwIP/src/include
-            -I Middlewares/Third_Party/LwIP/system
-            -I Middlewares/Third_Party/LwIP/src/include/netif
-            -I Middlewares/Third_Party/LwIP/src/include/lwip
-          lib_deps =
-             networking
-             webui
-             Middlewares/Third_Party/LwIP
-          lib_extra_dirs =
-
-          [env:slb_ext]
-          platform = ststm32
-          platform_packages = framework-stm32cubef4
-          framework = stm32cube
-          board = genericSTM32F412VG
-          upload_protocol = dfu
-          board_build.ldscript = STM32F412VGTx_FLASH.ld
-
-          extra_scripts =
-              pre:extra_script.py
-              post:extra_script.py
-
-          # Injected variables (safe for GH Actions)
-          lib_deps = {pio_c_deps}
-            eeprom
-            {pio_w_deps}
-            ./3rdparty/grblhal-rgb-plugin
-            ./3rdparty/sienci-atci-plugin
-
-          lib_extra_dirs = {pio_c_extra}
-
-          build_flags = {pio_c_flags}
-            {pio_w_flags}
-            -I ./3rdparty/grblhal-rgb-plugin
-            -I ./3rdparty/sienci-atci-plugin
-
-            -D WEB_BUILD
-            -D BOARD_LONGBOARD32_EXT
-            -D USE_HAL_DRIVER
-            -D STM32F412Vx
-            -D _WIZCHIP_=5500
-            -D ETHERNET_ENABLE=1
-            -D TELNET_ENABLE=1
-            -D WEBSOCKET_ENABLE=1
-            -D FTP_ENABLE=1
-            -D USB_SERIAL_CDC=1
-
-            {json_flags_str}
-          """
-
-              target_path = os.path.join("STM32F4xx", "platformio.ini")
-              os.makedirs(os.path.dirname(target_path), exist_ok=True)
-
-              with open(target_path, "w") as f:
-                  f.write(ini_template)
-
-              print(f"Successfully generated {target_path}")
-
-          if __name__ == "__main__":
-              generate_config()
-          EOF
-
-      - name: Generate PlatformIO Config
-        run: python generate_pio_config.py
-
-      - name: Inject Board Definition & Scripts
-        run: |
+          # --- FIX: Create 'boards' folder and move the JSON file there ---
+          echo "Setting up custom board definition..."
           mkdir -p STM32F4xx/boards
           cp genericSTM32F412VG.json STM32F4xx/boards/
+          # --------------------------------------------------------------
 
-          if [ -f "extra_script.py" ]; then
-             echo "Copying custom extra_script.py..."
-             cp extra_script.py STM32F4xx/
+          # Copy 3rdparty plugins if they exist
+          if [ -d "3rdparty" ]; then
+            echo "Copying 3rdparty plugins..."
+            cp -r 3rdparty STM32F4xx/
           else
-             echo "::warning:: extra_script.py not found in root! Build might fail."
+            echo "::warning:: '3rdparty' folder not found! Build will likely fail due to missing plugins."
           fi
 
+      # 6. Run PlatformIO to compile
       - name: Compile Firmware
         working-directory: STM32F4xx
-        run: pio run -e slb_ext 2>&1 | tee build.log
+        run: pio run -e slb_ext
 
-      - name: Prepare Web Assets
-        if: always()
-        run: |
-          mkdir -p public
-
-          if [ -f "STM32F4xx/.pio/build/slb_ext/firmware.hex" ]; then
-            cp STM32F4xx/.pio/build/slb_ext/firmware.hex public/firmware.hex
-            STATUS="Success"
-            COLOR="#28a745"
-          else
-            STATUS="Failed"
-            COLOR="#dc3545"
-          fi
-
-          if [ -f "STM32F4xx/build.log" ]; then
-            cp STM32F4xx/build.log public/build_log.txt
-          else
-             echo "Log file not found" > public/build_log.txt
-          fi
-
-          TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
-
-          cat > public/index.html <<EOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>AltMill Firmware Build</title>
-            <style>
-              body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f4f4; color: #333; }
-              .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 10px solid ${COLOR}; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-              .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-              .btn { display: inline-block; background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; }
-              .btn:hover { background: #0056b3; }
-              pre { background: #1e1e1e; color: #d4d4d4; padding: 15px; overflow: auto; max-height: 600px; border-radius: 5px; font-size: 0.9em; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>Build Status: <span style="color:${COLOR}">${STATUS}</span></h1>
-              <p>Completed at: ${TIMESTAMP}</p>
-            </div>
-
-            <div class="card">
-              <h3>Artifacts</h3>
-              ${STATUS == 'Success' ? '<a href="firmware.hex" class="btn">Download Firmware (.hex)</a>' : '<p>Build failed. No firmware generated.</p>'}
-              <br><br>
-              <p><small>Profile used: <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json">altmill.json</a></small></p>
-            </div>
-
-            <div class="card">
-              <h3>Compilation Log</h3>
-              <pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' public/build_log.txt)</pre>
-            </div>
-          </body>
-          </html>
-          EOF
-
+      # 7. Upload the resulting HEX file as an artifact
       - name: Upload Artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: SLB_EXT_Firmware
-          path: public/firmware.hex
-
-      - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          branch: gh-pages
-          folder: public
+          path: STM32F4xx/.pio/build/slb_ext/*.hex
+          if-no-files-found: error
