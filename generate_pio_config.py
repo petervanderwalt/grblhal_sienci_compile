@@ -1,45 +1,25 @@
-import requests
+#!/usr/bin/env python3
+
 import json
-import os
 import sys
+import textwrap
+from pathlib import Path
+import urllib.request
+import re
 
-PROFILE_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles/altmill.json"
+PROFILE_URL = (
+    "https://raw.githubusercontent.com/Sienci-Labs/"
+    "grblhal-profiles/main/profiles/altmill.json"
+)
 
-def generate_config():
-    print(f"Fetching profile from {PROFILE_URL}...")
-    try:
-        response = requests.get(PROFILE_URL)
-        response.raise_for_status()
-        profile_data = response.json()
-    except Exception as e:
-        print(f"Failed to fetch profile: {e}")
-        sys.exit(1)
+OUTPUT_INI = Path("platformio.ini")
 
-    # Convert JSON keys to -D flags
-    ignore_keys = ['info', 'version', 'name', 'description']
-    profile_flags = []
-    for key, value in profile_data.items():
-        if key not in ignore_keys:
-            if value is True:
-                profile_flags.append(f"-D{key}")
-            elif value is False:
-                pass
-            elif isinstance(value, str):
-                profile_flags.append(f'-D{key}=\\"{value}\\"')
-            else:
-                profile_flags.append(f"-D{key}={value}")
-
-    # Indent flags for the .ini file
-    profile_flags_str = "\n    ".join(profile_flags)
-
-    # Construct the file content
-    # Note: We use double {{ }} for PlatformIO variables so Python doesn't try to fill them
-    ini_content = f"""
+# MATCHING YOUR WORKING [common], [wiznet], and [env] EXACTLY
+STATIC_HEADER = """
 [platformio]
-default_envs = altmill_mk2_4x4_stock_firmware_incl_4_axes_rotary, altmill_mk2_4x4_atc_firmware_keepout_plugin_ngc_expressions_tool_table
+default_envs = {default_envs}
 include_dir = Inc
 src_dir = Src
-boards_dir = boards
 
 [common]
 build_flags =
@@ -111,59 +91,86 @@ extra_scripts =
     post:extra_script.py
 custom_prog_version = SLB_EXT
 custom_board_name = 'default'
-
-; --- Stock Firmware Environment ---
-[env:altmill_mk2_4x4_stock_firmware_incl_4_axes_rotary]
-board = genericSTM32F412VG
-upload_protocol = dfu
-board_build.ldscript = STM32F412VGTX_FLASH.ld
-build_flags = ${{common.build_flags}}
-  ${{wiznet_networking.build_flags}}
-  -I ./3rdparty/grblhal-rgb-plugin
-  -I ./3rdparty/grblhal-keepout-plugin
-  -D WEB_BUILD
-  -D BOARD_LONGBOARD32_EXT
-  -D USE_HAL_DRIVER
-  -D STM32F412Vx
-    {profile_flags_str}
-
-lib_deps = ${{common.lib_deps}}
-  eeprom
-  ${{wiznet_networking.lib_deps}}
-  ./3rdparty/grblhal-rgb-plugin
-  ./3rdparty/sienci-atci-plugin
-lib_extra_dirs = ${{common.lib_extra_dirs}}
-
-; --- ATC Firmware Environment ---
-[env:altmill_mk2_4x4_atc_firmware_keepout_plugin_ngc_expressions_tool_table]
-board = genericSTM32F412VG
-upload_protocol = dfu
-board_build.ldscript = STM32F412VGTX_FLASH.ld
-build_flags = ${{common.build_flags}}
-  ${{wiznet_networking.build_flags}}
-  -I ./3rdparty/grblhal-rgb-plugin
-  -I ./3rdparty/grblhal-keepout-plugin
-  -D WEB_BUILD
-  -D BOARD_LONGBOARD32_EXT
-  -D USE_HAL_DRIVER
-  -D STM32F412Vx
-    {profile_flags_str}
-
-lib_deps = ${{common.lib_deps}}
-  eeprom
-  ${{wiznet_networking.lib_deps}}
-  ./3rdparty/grblhal-rgb-plugin
-  ./3rdparty/sienci-atci-plugin
-lib_extra_dirs = ${{common.lib_extra_dirs}}
 """
 
-    # Write the file into the driver directory
-    target_path = os.path.join("STM32F4xx", "platformio.ini")
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    with open(target_path, "w") as f:
-        f.write(ini_content)
+def sanitize_env_name(name: str) -> str:
+    name = name.lower()
+    name = re.sub(r"[()]", "", name)
+    name = re.sub(r"[^a-z0-9]+", "_", name)
+    name = re.sub(r"_+", "_", name)
+    return name.strip("_")
 
-    print(f"Done! Generated {target_path} using {len(profile_flags)} flags from {PROFILE_URL}")
+def download_profile(url):
+    print(f"Downloading profile from {url}...")
+    with urllib.request.urlopen(url) as resp:
+        return json.loads(resp.read().decode())
+
+def format_build_flags(defines):
+    flags = []
+    for k, v in defines.items():
+        # Clean up values: if it's a string, keep it; if it's a bool, handle -D flag
+        if isinstance(v, bool):
+            if v:
+                flags.append(f"-D {k}")
+        else:
+            flags.append(f"-D {k}={v}")
+    # Indent by 4 spaces to match the slb_ext environment style
+    return "\n    ".join(flags)
+
+def generate_env(variant):
+    display_name = variant["name"]
+    env_name = sanitize_env_name(display_name)
+    defines = variant.get("defines", {})
+
+    # Generate the 100+ machine defines from the JSON
+    v_flags = format_build_flags(defines)
+
+    return textwrap.dedent(f"""
+    ; {display_name}
+    [env:{env_name}]
+    board = genericSTM32F412VG
+    upload_protocol = dfu
+    board_build.ldscript = STM32F412VGTX_FLASH.ld
+    build_flags = ${{common.build_flags}}
+      ${{wiznet_networking.build_flags}}
+      -I ./3rdparty/grblhal-rgb-plugin
+      -I ./3rdparty/grblhal-keepout-plugin
+      -D WEB_BUILD
+      -D BOARD_LONGBOARD32_EXT
+      -D USE_HAL_DRIVER
+      -D STM32F412Vx
+      {v_flags}
+
+    lib_deps = ${{common.lib_deps}}
+      eeprom
+      ${{wiznet_networking.lib_deps}}
+      ./3rdparty/grblhal-rgb-plugin
+      ./3rdparty/sienci-atci-plugin
+    lib_extra_dirs = ${{common.lib_extra_dirs}}
+    """).strip()
+
+def main():
+    profile = download_profile(PROFILE_URL)
+    variants = profile.get("variants")
+    if not variants:
+        raise RuntimeError("No variants found in profile")
+
+    env_names = [sanitize_env_name(v["name"]) for v in variants]
+
+    sections = [
+        STATIC_HEADER.format(default_envs=", ".join(env_names))
+    ]
+
+    for variant in variants:
+        sections.append(generate_env(variant))
+
+    content = "\n\n".join(sections)
+    OUTPUT_INI.write_text(content)
+
+    # Log the output so you can verify it in the GitHub Action console
+    print("--- GENERATED PLATFORMIO.INI ---")
+    print(content)
+    print("--- END GENERATED FILE ---")
 
 if __name__ == "__main__":
-    generate_config()
+    main()
