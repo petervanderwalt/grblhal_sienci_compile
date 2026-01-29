@@ -76,6 +76,7 @@ jobs:
           # If you don't have this file yet, we create a placeholder
           if [ -f "web_interface/index.html" ]; then
             cp web_interface/index.html public/
+            cp web_interface/*.js public/
           else
             echo "<html><body><h1>Firmware Repository</h1><p>See /firmware_manifest.json for data</p></body></html>" > public/index.html
           fi
