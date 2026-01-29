@@ -89,30 +89,31 @@ var device = null;
     }
 
     function populateInterfaceList(form, device_, interfaces) {
-        let old_choices = Array.from(form.querySelectorAll("label.radio"));
-        for (let radio_div of old_choices) {
-            form.removeChild(radio_div);
-        }
+    let container = form.querySelector("#interface-choices");
+    container.innerHTML = ""; // Clear old choices
 
-        let buttonContainer = form.querySelector(".d-flex");
+    for (let i=0; i < interfaces.length; i++) {
+        let radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "interfaceIndex";
+        radio.value = i;
+        radio.id = "interface" + i;
+        radio.className = "form-check-input me-2";
+        radio.required = true;
 
-        for (let i=0; i < interfaces.length; i++) {
-            let radio = document.createElement("input");
-            radio.type = "radio";
-            radio.name = "interfaceIndex";
-            radio.value = i;
-            radio.id = "interface" + i;
-            radio.required = true;
+        let label = document.createElement("label");
+        label.textContent = formatDFUInterfaceAlternate(interfaces[i]);
+        label.className = "form-check-label small";
+        label.setAttribute("for", "interface" + i);
 
-            let label = document.createElement("label");
-            label.textContent = formatDFUInterfaceAlternate(interfaces[i]);
-            label.className = "radio"
-            label.setAttribute("for", "interface" + i);
-            label.prepend(radio);
+        let wrapper = document.createElement("div");
+        wrapper.className = "form-check";
+        wrapper.appendChild(radio);
+        wrapper.appendChild(label);
 
-            form.insertBefore(label, buttonContainer);
-        }
+        container.appendChild(wrapper);
     }
+}
 
     function getDFUDescriptorProperties(device) {
         return device.readConfigurationDescriptor(0).then(
