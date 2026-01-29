@@ -38,22 +38,192 @@ jobs:
           git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git
           git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
 
-      # --- HERE IS THE CHANGE: Run the script instead of inline code ---
+      # --- NEW STEP: Create the Python script on the runner ---
+      - name: Create Config Generator Script
+        run: |
+          cat << 'EOF' > generate_pio_config.py
+          import requests
+          import json
+          import os
+          import sys
+
+          PROFILE_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/refs/heads/main/profiles/altmill.json"
+
+          def generate_config():
+              print(f"Fetching profile from {PROFILE_URL}...")
+              try:
+                  response = requests.get(PROFILE_URL)
+                  response.raise_for_status()
+                  profile_data = response.json()
+              except Exception as e:
+                  print(f"Failed to fetch profile: {e}")
+                  sys.exit(1)
+
+              ignore_keys = ['info', 'version', 'name', 'description']
+              json_flags = []
+
+              for key, value in profile_data.items():
+                  if key not in ignore_keys:
+                      if value is True:
+                          json_flags.append(f"-D{key}")
+                      elif value is False:
+                          pass
+                      elif isinstance(value, str):
+                          json_flags.append(f'-D{key}=\\"{value}\\"')
+                      else:
+                          json_flags.append(f"-D{key}={value}")
+
+              json_flags_str = "\n    ".join(json_flags)
+
+              # Note: In Python f-strings, {{ becomes {
+              ini_template = f"""
+          [platformio]
+          include_dir = Inc
+          src_dir = Src
+          boards_dir = boards
+
+          [common]
+          build_flags =
+            -I .
+            -I boards
+            -I FatFs
+            -I FatFs/STM
+            -I Drivers/FATFS/Target
+            -I Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+            -I Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+            -I USB_DEVICE/App
+            -I USB_DEVICE/Target
+            -D OVERRIDE_MY_MACHINE
+            -D _USE_IOCTL=1
+            -D _USE_WRITE=1
+            -D _VOLUMES=1
+            -Wl,-u,_printf_float
+            -Wl,-u,_scanf_float
+          lib_deps =
+            boards
+            bluetooth
+            grbl
+            keypad
+            laser
+            motors
+            trinamic
+            odometer
+            openpnp
+            fans
+            plugins
+            FatFs
+            sdcard
+            spindle
+            embroidery
+            Drivers/FATFS/App
+            Drivers/FATFS/Target
+            Middlewares/ST/STM32_USB_Device_Library/Core
+            Middlewares/ST/STM32_USB_Device_Library/Class
+            USB_DEVICE/App
+            USB_DEVICE/Target
+          lib_extra_dirs =
+            .
+            boards
+            FatFs
+            Middlewares/ST/STM32_USB_Device_Library
+            USB_DEVICE
+
+          [eth_networking]
+          build_flags =
+            -I LWIP/App
+            -I LWIP/dp83848/Target
+            -I Middlewares/Third_Party/LwIP/src/include
+            -I Middlewares/Third_Party/LwIP/system
+            -I Middlewares/Third_Party/LwIP/src/include/netif
+            -I Middlewares/Third_Party/LwIP/src/include/lwip
+            -I Drivers/BSP/Components/dp83848
+          lib_deps =
+             networking
+             webui
+             LWIP/App
+             LWIP/dp83848/Target
+             Middlewares/Third_Party/LwIP
+             Drivers/BSP/Components/dp83848
+          lib_extra_dirs =
+
+          [wiznet_networking]
+          build_flags =
+            -I networking/wiznet
+            -I Middlewares/Third_Party/LwIP/src/include
+            -I Middlewares/Third_Party/LwIP/system
+            -I Middlewares/Third_Party/LwIP/src/include/netif
+            -I Middlewares/Third_Party/LwIP/src/include/lwip
+          lib_deps =
+             networking
+             webui
+             Middlewares/Third_Party/LwIP
+          lib_extra_dirs =
+
+          [env:slb_ext]
+          platform = ststm32
+          platform_packages = framework-stm32cubef4
+          framework = stm32cube
+          board = genericSTM32F412VG
+          upload_protocol = dfu
+          board_build.ldscript = STM32F412VGTx_FLASH.ld
+
+          extra_scripts =
+              pre:extra_script.py
+              post:extra_script.py
+
+          # We use double curly braces here to output literal ${{...}} for PIO
+          lib_deps = ${{common.lib_deps}}
+            eeprom
+            ${{wiznet_networking.lib_deps}}
+            ./3rdparty/grblhal-rgb-plugin
+            ./3rdparty/sienci-atci-plugin
+
+          lib_extra_dirs = ${{common.lib_extra_dirs}}
+
+          build_flags = ${{common.build_flags}}
+            ${{wiznet_networking.build_flags}}
+            -I ./3rdparty/grblhal-rgb-plugin
+            -I ./3rdparty/sienci-atci-plugin
+
+            -D WEB_BUILD
+            -D BOARD_LONGBOARD32_EXT
+            -D USE_HAL_DRIVER
+            -D STM32F412Vx
+            -D _WIZCHIP_=5500
+            -D ETHERNET_ENABLE=1
+            -D TELNET_ENABLE=1
+            -D WEBSOCKET_ENABLE=1
+            -D FTP_ENABLE=1
+            -D USB_SERIAL_CDC=1
+
+            {json_flags_str}
+          """
+
+              target_path = os.path.join("STM32F4xx", "platformio.ini")
+              os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+              with open(target_path, "w") as f:
+                  f.write(ini_template)
+
+              print(f"Successfully generated {target_path}")
+
+          if __name__ == "__main__":
+              generate_config()
+          EOF
+
       - name: Generate PlatformIO Config
         run: python generate_pio_config.py
 
       - name: Inject Board Definition & Scripts
         run: |
-          # 1. Board Definition
           mkdir -p STM32F4xx/boards
           cp genericSTM32F412VG.json STM32F4xx/boards/
 
-          # 2. Extra Script (Required for build)
           if [ -f "extra_script.py" ]; then
              echo "Copying custom extra_script.py..."
              cp extra_script.py STM32F4xx/
           else
-             echo "::warning:: extra_script.py not found in root! Build might fail."
+             echo "::warning:: extra_script.py not found in root! Build might fail if the driver requires it."
           fi
 
       - name: Compile Firmware
@@ -65,7 +235,6 @@ jobs:
         run: |
           mkdir -p public
 
-          # Handle Firmware File
           if [ -f "STM32F4xx/.pio/build/slb_ext/firmware.hex" ]; then
             cp STM32F4xx/.pio/build/slb_ext/firmware.hex public/firmware.hex
             STATUS="Success"
@@ -75,7 +244,6 @@ jobs:
             COLOR="#dc3545"
           fi
 
-          # Handle Log File
           if [ -f "STM32F4xx/build.log" ]; then
             cp STM32F4xx/build.log public/build_log.txt
           else
@@ -84,7 +252,6 @@ jobs:
 
           TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
 
-          # Generate HTML
           cat > public/index.html <<EOF
           <!DOCTYPE html>
           <html>
@@ -114,7 +281,6 @@ jobs:
 
             <div class="card">
               <h3>Compilation Log</h3>
-              <!-- Sanitize log output for HTML -->
               <pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' public/build_log.txt)</pre>
             </div>
           </body>
