@@ -159,31 +159,75 @@
         const log = document.getElementById('downloadLog');
 
         // --- NEW: WebSerial DFU Mode Switcher ---
+        // --- UPDATED: WebSerial DFU Mode Switcher ---
         document.getElementById('serial-dfu').addEventListener('click', async () => {
             if (!("serial" in navigator)) {
                 log.value += "[ERROR] WebSerial is not supported in this browser. Use Chrome, Edge, or Opera.\n";
                 return;
             }
 
+            let port;
             try {
                 log.value += "[INFO] Requesting Serial Port...\n";
-                const port = await navigator.serial.requestPort();
+                port = await navigator.serial.requestPort();
 
                 log.value += "[INFO] Opening port at 115200 baud...\n";
                 await port.open({ baudRate: 115200 });
 
-                log.value += "[INFO] Sending $dfu command...\n";
                 const encoder = new TextEncoder();
                 const writer = port.writable.getWriter();
+
+                log.value += "[INFO] Sending $dfu command...\n";
                 await writer.write(encoder.encode("$dfu\n"));
-
-                log.value += "[INFO] Closing port...\n";
                 writer.releaseLock();
-                await port.close();
 
-                log.value += "[SUCCESS] Command sent. Board should reboot into DFU mode now. Click 'Select DFU Device' next.\n";
+                // 1) Read serial port data until it stops or disconnects
+                log.value += "[INFO] Waiting for device response...\n";
+                const decoder = new TextDecoder();
+                let reader = port.readable.getReader();
+
+                try {
+                    while (true) {
+                        // We use a timeout to decide when "data stops streaming"
+                        // If the board reboots, this read() will usually throw an error immediately
+                        const { value, done } = await Promise.race([
+                            reader.read(),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))
+                        ]);
+
+                        if (done) {
+                            log.value += "[INFO] Serial stream closed by device.\n";
+                            break;
+                        }
+
+                        if (value) {
+                            const chunk = decoder.decode(value);
+                            log.value += `[DEVICE] ${chunk}`;
+                            log.scrollTop = log.scrollHeight;
+                        }
+                    }
+                } catch (readErr) {
+                    if (readErr.message === "timeout") {
+                        log.value += "[INFO] No more data received.\n";
+                    } else {
+                        // This happens when the device reboots and the USB serial port disappears
+                        log.value += `[INFO] Device disconnected (expected during reboot).\n`;
+                    }
+                } finally {
+                    reader.releaseLock();
+                    await port.close();
+                    log.value += "[INFO] Port closed.\n";
+                }
+
+                // 2) Automatically trigger the DFU selector button
+                log.value += "[SUCCESS] Attempting to open DFU selector...\n";
+                setTimeout(() => {
+                    document.getElementById('connect').click();
+                }, 500); // Small delay to let the OS recognize the new DFU device
+
             } catch (err) {
                 log.value += `[ERROR] WebSerial Error: ${err.message}\n`;
+                if (port) await port.close().catch(() => {});
             }
         });
 

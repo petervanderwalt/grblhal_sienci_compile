@@ -363,8 +363,8 @@ var device = null;
             updateFlashButtonState();
 
             connectButton.innerHTML = `<i class="bi bi-usb-drive-fill"></i> Select DFU device`;
-            connectButton.classList.remove('btn-danger');
-            connectButton.classList.add('btn-primary');
+            connectButton.classList.remove('btn-outline-danger');
+            connectButton.classList.add('btn-outline-dark');
 
             infoDisplay.textContent = "Not connected";
             dfuDisplay.textContent = "";
@@ -454,8 +454,8 @@ var device = null;
             statusDisplay.textContent = `Connected to ${device.device_.productName || "Untitled Device"}`;
 
             connectButton.innerHTML = `<i class="bi bi-x-circle-fill"></i> Disconnect`;
-            connectButton.classList.remove('btn-primary');
-            connectButton.classList.add('btn-danger');
+            connectButton.classList.remove('btn-outline-dark');
+            connectButton.classList.add('btn-outline-danger');
 
             infoDisplay.textContent = (
                 `Name: ${device.device_.productName || "N/A"}\n` +
