@@ -17,39 +17,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout your repo (contains genericSTM32F412VG.json)
       - name: Checkout Custom Config
         uses: actions/checkout@v4
 
-      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. Install PlatformIO and Requests
       - name: Install Dependencies
-        run: |
-          pip install -U platformio requests
+        run: pip install -U platformio requests
 
-      # 4. Clone the grblHAL STM32F4xx Driver
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Clone 3rd Party Plugins into the driver folder
       - name: Install Plugins
         run: |
           mkdir -p STM32F4xx/3rdparty
           cd STM32F4xx/3rdparty
-
-          echo "Cloning Sienci ATCI Plugin..."
           git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git
-
-          echo "Cloning GrblHAL RGB Plugin..."
           git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
 
-      # 6. Generate PlatformIO Config Dynamically
-      # This script reconstructs your Reference INI and injects the JSON profile values
       - name: Generate Dynamic PlatformIO Config
         shell: python
         run: |
@@ -57,7 +45,7 @@ jobs:
           import json
           import os
 
-          # 1. Fetch the JSON Profile
+          # 1. Fetch Profile
           PROFILE_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/refs/heads/main/profiles/altmill.json"
 
           print(f"Fetching profile from {PROFILE_URL}...")
@@ -69,11 +57,9 @@ jobs:
               print(f"Failed to fetch profile: {e}")
               exit(1)
 
-          # 2. Process JSON into Build Flags
-          # We ignore metadata keys.
+          # 2. Process JSON Flags
           ignore_keys = ['info', 'version', 'name', 'description']
           json_flags = []
-
           for key, value in profile_data.items():
               if key not in ignore_keys:
                   if value is True:
@@ -87,10 +73,15 @@ jobs:
 
           json_flags_str = "\n    ".join(json_flags)
 
-          # 3. Define the Reference INI Structure
-          # We include the [common], [eth], [wiznet] blocks exactly as you provided.
-          # In [env:slb_ext], we include the HARDWARE flags, and append the JSON flags.
+          # 3. Define PlatformIO Interpolation Variables
+          # We define these here to avoid GitHub Actions trying to parse ${{...}}
+          pio_common_deps = "${common.lib_deps}"
+          pio_wiznet_deps = "${wiznet_networking.lib_deps}"
+          pio_common_flags = "${common.build_flags}"
+          pio_wiznet_flags = "${wiznet_networking.build_flags}"
+          pio_common_extra = "${common.lib_extra_dirs}"
 
+          # 4. Generate Content
           ini_content = f"""
           [platformio]
           include_dir = Inc
@@ -181,27 +172,25 @@ jobs:
           board = genericSTM32F412VG
           upload_protocol = dfu
 
-          # Fix for variant_generic.h error
           extra_scripts =
             pre:extra_script.py
             post:extra_script.py
 
           board_build.ldscript = STM32F412VGTx_FLASH.ld
 
-          lib_deps = ${{common.lib_deps}}
+          lib_deps = {pio_common_deps}
             eeprom
-            ${{wiznet_networking.lib_deps}}
+            {pio_wiznet_deps}
             ./3rdparty/grblhal-rgb-plugin
             ./3rdparty/sienci-atci-plugin
 
-          lib_extra_dirs = ${{common.lib_extra_dirs}}
+          lib_extra_dirs = {pio_common_extra}
 
-          build_flags = ${{common.build_flags}}
-            ${{wiznet_networking.build_flags}}
+          build_flags = {pio_common_flags}
+            {pio_wiznet_flags}
             -I ./3rdparty/grblhal-rgb-plugin
             -I ./3rdparty/sienci-atci-plugin
 
-            # --- System / Hardware Definitions (Fixed) ---
             -D WEB_BUILD
             -D BOARD_LONGBOARD32_EXT
             -D USE_HAL_DRIVER
@@ -213,59 +202,41 @@ jobs:
             -D FTP_ENABLE=1
             -D USB_SERIAL_CDC=1
 
-            # --- Dynamic Profile Definitions (From JSON) ---
             {json_flags_str}
           """
 
-          # Write to file
           with open("STM32F4xx/platformio.ini", "w") as f:
               f.write(ini_content)
 
           print("Successfully generated STM32F4xx/platformio.ini")
 
-      # 7. Inject Board Config & Scripts
       - name: Inject Board Definition
         run: |
-          # Create boards directory in the driver
           mkdir -p STM32F4xx/boards
-
-          # Copy your custom board JSON
           cp genericSTM32F412VG.json STM32F4xx/boards/
-
-          # Ensure extra_script.py is present.
-          # The repo usually has it, but if you have a custom one in your root, copy it:
           if [ -f "extra_script.py" ]; then
-             echo "Using custom extra_script.py"
              cp extra_script.py STM32F4xx/
           fi
 
-      # 8. Compile
       - name: Compile Firmware
         working-directory: STM32F4xx
-        run: |
-          # Use stm32cube framework as requested in reference INI
-          pio run -e slb_ext 2>&1 | tee build.log
+        run: pio run -e slb_ext 2>&1 | tee build.log
 
-      # 9. Prepare GitHub Pages
       - name: Prepare Web Assets
         if: always()
         run: |
           mkdir -p public
-
           if [ -f "STM32F4xx/.pio/build/slb_ext/firmware.hex" ]; then
             cp STM32F4xx/.pio/build/slb_ext/firmware.hex public/firmware.hex
             STATUS="Success"
-            COLOR="#28a745" # Green
+            COLOR="#28a745"
           else
             STATUS="Failed"
-            COLOR="#dc3545" # Red
+            COLOR="#dc3545"
           fi
-
           cp STM32F4xx/build.log public/build_log.txt
-
           TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
 
-          # Create HTML
           cat > public/index.html <<EOF
           <!DOCTYPE html>
           <html>
@@ -284,14 +255,12 @@ jobs:
               <h1>Build Status: <span style="color:${COLOR}">${STATUS}</span></h1>
               <p>Timestamp: ${TIMESTAMP}</p>
             </div>
-
             <div class="card">
               <h3>Artifacts</h3>
               ${STATUS == 'Success' ? '<a href="firmware.hex" class="btn">Download Firmware (.hex)</a>' : 'No firmware generated.'}
               <br><br>
               <small>Profile: <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json">altmill.json</a></small>
             </div>
-
             <div class="card">
               <h3>Build Log</h3>
               <pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' public/build_log.txt)</pre>
@@ -300,7 +269,6 @@ jobs:
           </html>
           EOF
 
-      # 10. Upload Artifacts
       - name: Upload Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -308,7 +276,6 @@ jobs:
           name: SLB_EXT_Firmware
           path: public/firmware.hex
 
-      # 11. Deploy
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
