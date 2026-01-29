@@ -38,7 +38,7 @@ jobs:
           git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git
           git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
 
-      # --- NEW STEP: Create the Python script on the runner ---
+      # --- FIXED STEP: Generates the Python script avoiding GH Actions syntax collision ---
       - name: Create Config Generator Script
         run: |
           cat << 'EOF' > generate_pio_config.py
@@ -75,7 +75,17 @@ jobs:
 
               json_flags_str = "\n    ".join(json_flags)
 
-              # Note: In Python f-strings, {{ becomes {
+              # --- FIX FOR GITHUB ACTIONS ---
+              # We construct the PIO variables by splitting the strings.
+              # This prevents GitHub Actions from trying to parse ${{...}}
+
+              # Result: ${common.lib_deps}
+              pio_c_deps = "${" + "common.lib_deps}"
+              pio_w_deps = "${" + "wiznet_networking.lib_deps}"
+              pio_c_flags = "${" + "common.build_flags}"
+              pio_w_flags = "${" + "wiznet_networking.build_flags}"
+              pio_c_extra = "${" + "common.lib_extra_dirs}"
+
               ini_template = f"""
           [platformio]
           include_dir = Inc
@@ -171,17 +181,17 @@ jobs:
               pre:extra_script.py
               post:extra_script.py
 
-          # We use double curly braces here to output literal ${{...}} for PIO
-          lib_deps = ${{common.lib_deps}}
+          # Injected variables (safe for GH Actions)
+          lib_deps = {pio_c_deps}
             eeprom
-            ${{wiznet_networking.lib_deps}}
+            {pio_w_deps}
             ./3rdparty/grblhal-rgb-plugin
             ./3rdparty/sienci-atci-plugin
 
-          lib_extra_dirs = ${{common.lib_extra_dirs}}
+          lib_extra_dirs = {pio_c_extra}
 
-          build_flags = ${{common.build_flags}}
-            ${{wiznet_networking.build_flags}}
+          build_flags = {pio_c_flags}
+            {pio_w_flags}
             -I ./3rdparty/grblhal-rgb-plugin
             -I ./3rdparty/sienci-atci-plugin
 
@@ -223,7 +233,7 @@ jobs:
              echo "Copying custom extra_script.py..."
              cp extra_script.py STM32F4xx/
           else
-             echo "::warning:: extra_script.py not found in root! Build might fail if the driver requires it."
+             echo "::warning:: extra_script.py not found in root! Build might fail."
           fi
 
       - name: Compile Firmware
