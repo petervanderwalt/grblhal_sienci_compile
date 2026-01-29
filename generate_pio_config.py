@@ -32,7 +32,8 @@ lib_ldf_mode = off
 ; grblHAL STM32 layout
 src_dir = Src
 include_dir = Inc
-""").strip()
+"""
+
 
 def sanitize_env_name(name: str) -> str:
     name = name.lower()
