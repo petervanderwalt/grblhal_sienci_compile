@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import json
-import sys
 import textwrap
 from pathlib import Path
 import urllib.request
@@ -14,7 +13,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-# MATCHING YOUR WORKING [common], [wiznet], and [env] EXACTLY
+# MATCHING YOUR WORKING FILE EXACTLY
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -106,69 +105,63 @@ def download_profile(url):
         return json.loads(resp.read().decode())
 
 def format_build_flags(defines):
-    flags = []
-    # Sort keys for a clean platformio.ini output
+    """Formats dict into -D KEY=VALUE with leading spaces for PIO config."""
+    lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
         if isinstance(v, bool):
             if v:
-                flags.append(f"-D {k}")
+                lines.append(f"  -D {k}")
         else:
-            # This handles strings (like AXIS3_LETTER: "'A'") and numbers correctly
-            flags.append(f"-D {k}={v}")
-
-    return "\n    ".join(flags)
+            # Handle strings like "'A'" or numeric values
+            lines.append(f"  -D {k}={v}")
+    return "\n".join(lines)
 
 def generate_env(variant, global_defines):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
 
-    # 1. Start with global machine defines
-    variant_defines = global_defines.copy()
+    # Merge levels: Global Machine -> Variant Symbols -> Variant Settings
+    merged_defines = global_defines.copy()
+    merged_defines.update(variant.get("default_symbols", {}))
+    merged_defines.update(variant.get("setting_defaults", {}))
 
-    # 2. Merge variant-specific symbols (e.g. N_AXIS)
-    variant_defines.update(variant.get("default_symbols", {}))
+    # Format the defines into the -D list
+    v_flags = format_build_flags(merged_defines)
 
-    # 3. Merge variant-specific setting defaults (e.g. TRAVEL limits)
-    variant_defines.update(variant.get("setting_defaults", {}))
+    # Use a raw string to prevent any indentation stripping logic from breaking the PIO format
+    return f"""
+; {display_name}
+[env:{env_name}]
+board = genericSTM32F412VG
+upload_protocol = dfu
+board_build.ldscript = STM32F412VGTX_FLASH.ld
+build_flags =
+  ${{common.build_flags}}
+  ${{wiznet_networking.build_flags}}
+  -I ./3rdparty/grblhal-rgb-plugin
+  -I ./3rdparty/grblhal-keepout-plugin
+  -D WEB_BUILD
+  -D BOARD_LONGBOARD32_EXT
+  -D USE_HAL_DRIVER
+  -D STM32F412Vx
+{v_flags}
 
-    # Convert dictionary to PlatformIO build flags
-    v_flags = format_build_flags(variant_defines)
-
-    return textwrap.dedent(f"""
-    ; {display_name}
-    [env:{env_name}]
-    board = genericSTM32F412VG
-    upload_protocol = dfu
-    board_build.ldscript = STM32F412VGTX_FLASH.ld
-    build_flags = ${{common.build_flags}}
-      ${{wiznet_networking.build_flags}}
-      -I ./3rdparty/grblhal-rgb-plugin
-      -I ./3rdparty/grblhal-keepout-plugin
-      -D WEB_BUILD
-      -D BOARD_LONGBOARD32_EXT
-      -D USE_HAL_DRIVER
-      -D STM32F412Vx
-      {v_flags}
-
-    lib_deps = ${{common.lib_deps}}
-      eeprom
-      ${{wiznet_networking.lib_deps}}
-      ./3rdparty/grblhal-rgb-plugin
-      ./3rdparty/sienci-atci-plugin
-    lib_extra_dirs = ${{common.lib_extra_dirs}}
-    """).strip()
+lib_deps =
+  ${{common.lib_deps}}
+  eeprom
+  ${{wiznet_networking.lib_deps}}
+  ./3rdparty/grblhal-rgb-plugin
+  ./3rdparty/sienci-atci-plugin
+lib_extra_dirs = ${{common.lib_extra_dirs}}
+"""
 
 def main():
     profile = download_profile(PROFILE_URL)
 
-    # Extract global machine data
     machine = profile.get("machine", {})
-    global_symbols = machine.get("default_symbols", {})
-    global_settings = machine.get("setting_defaults", {})
-
-    # Merge global data (Settings override symbols if there's a collision)
-    global_defines = {**global_symbols, **global_settings}
+    # Get the global machine defaults
+    global_defines = {**machine.get("default_symbols", {}), **machine.get("setting_defaults", {})}
 
     variants = profile.get("variants")
     if not variants:
@@ -176,17 +169,15 @@ def main():
 
     env_names = [sanitize_env_name(v["name"]) for v in variants]
 
-    sections = [
-        STATIC_HEADER.format(default_envs=", ".join(env_names))
-    ]
+    # Generate Header
+    content = STATIC_HEADER.format(default_envs=", ".join(env_names)).strip() + "\n"
 
+    # Generate Environments
     for variant in variants:
-        sections.append(generate_env(variant, global_defines))
+        content += generate_env(variant, global_defines)
 
-    content = "\n\n".join(sections)
     OUTPUT_INI.write_text(content)
-
-    print(f"Successfully generated {OUTPUT_INI} with {len(variants)} environments.")
+    print(f"Generated {OUTPUT_INI} successfully.")
 
 if __name__ == "__main__":
     main()
