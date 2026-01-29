@@ -7,13 +7,15 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Config Repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -21,51 +23,69 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install PlatformIO
-        run: pip install -U platformio
+      - name: Install Dependencies
+        run: pip install -U platformio requests
 
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      - name: Inject Board Definitions and Plugins
+      - name: Install 3rd Party Plugins (Online)
+        run: |
+          mkdir -p STM32F4xx/3rdparty
+          cd STM32F4xx/3rdparty
+          # Clone the specific plugins requested
+          git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git
+          git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
+
+      - name: Generate Dynamic PlatformIO Config
+        run: python generate_pio_config.py
+
+      - name: Inject Board Definition and Scripts
         run: |
           mkdir -p STM32F4xx/boards
+          # Move your custom board definition and renaming script into the driver
           cp genericSTM32F412VG.json STM32F4xx/boards/
-          if [ -d "3rdparty" ]; then cp -r 3rdparty STM32F4xx/; fi
-          if [ -f "extra_script.py" ]; then cp extra_script.py STM32F4xx/ ; fi
-
-      # --- BASELINE BUILD (Using your original file) ---
-      # This confirms if the linking issue is in the generator or the environment
-      - name: Run Baseline Build (Original Config)
-        if: hashFiles('platformio.ini.orig') != ''
-        working-directory: STM32F4xx
-        run: |
-          cp ../platformio.ini.orig platformio.ini
-          pio run -e slb_ext
-
-      # --- GENERATED BUILD ---
-      - name: Generate and Log PlatformIO Config
-        run: |
-          python generate_pio_config.py
-          cp platformio.ini STM32F4xx/
+          cp extra_script.py STM32F4xx/
+          # Ensure any LD scripts in root are available to the build
+          cp *.ld STM32F4xx/ 2>/dev/null || true
 
       - name: Compile All Variants
         working-directory: STM32F4xx
-        run: pio run
+        run: |
+          # Build all envs (Stock and ATC) and save log
+          pio run 2>&1 | tee build.log
 
       - name: Prepare Web Directory
         run: |
           mkdir -p public/firmware
-          touch public/.nojekyll
-          find STM32F4xx/.pio/build -name "*.hex" -exec cp {} public/firmware/ \;
-          if [ -d "web_interface" ]; then cp web_interface/* public/; fi
 
-      - name: Generate JSON Manifest
+          # 1. Copy your existing Web Portal files (UI, DFU logic, etc.)
+          cp index.html public/
+          cp dfu.js dfuse.js dfu-util.js FileSaver.js public/
+
+          # 2. Collect the Renamed HEX files produced by extra_script.py
+          # They are moved to the firmware/ subfolder for the manifest to find
+          find STM32F4xx/.pio/build -name "*.hex" -exec cp {} public/firmware/ \;
+
+          # 3. Move the build log to the public root
+          cp STM32F4xx/build.log public/build.log
+
+          # 4. Prevent GitHub Pages from ignoring files starting with underscore
+          touch public/.nojekyll
+
+      - name: Generate Manifest
         run: python generate_manifest.py
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Upload Artifact (Standard Action Run)
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
-          force_orphan: true
+          name: SLB_Firmware_Builds
+          path: public/firmware/*.hex
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: public
+          clean: true
