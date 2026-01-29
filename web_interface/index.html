@@ -7,6 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 
+    <!-- Load scripts in order -->
     <script src="dfu.js"></script>
     <script src="dfuse.js"></script>
     <script src="FileSaver.js"></script>
@@ -15,13 +16,14 @@
     <style>
         body { background-color: #f8f9fa; height: 100vh; display: flex; flex-direction: column; }
         #app-container { flex: 1; display: flex; overflow: hidden; }
-        #sidebar { flex: 0 0 450px; background: #fff; border-right: 1px solid #dee2e6; overflow-y: auto; padding: 20px; }
+        #sidebar { flex: 0 0 420px; background: #fff; border-right: 1px solid #dee2e6; overflow-y: auto; padding: 20px; }
         #main-content { flex: 1; padding: 20px; display: flex; flex-direction: column; background: #f1f3f5; }
-        .variant-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 12px; transition: 0.2s; }
-        .variant-card:hover { border-color: #0d6efd; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-        .build-date { font-size: 0.8rem; color: #6c757d; }
-        #downloadLog { flex: 1; font-family: monospace; font-size: 0.8rem; resize: none; margin-top: 10px; }
-        .status-bar { font-weight: bold; font-size: 0.9rem; }
+        .variant-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 12px; transition: 0.2s; cursor: pointer; }
+        .variant-card:hover { border-color: #0d6efd; background-color: #f0f7ff; }
+        .variant-card.active { border-color: #0d6efd; border-width: 2px; background-color: #e7f1ff; }
+        .build-date { font-size: 0.75rem; color: #6c757d; }
+        #downloadLog { flex: 1; font-family: monospace; font-size: 0.8rem; resize: none; margin-top: 10px; background: #212529; color: #f8f9fa; }
+        .status-bar { font-weight: bold; font-size: 0.9rem; color: #0d6efd; }
     </style>
 </head>
 <body>
@@ -29,59 +31,69 @@
     <nav class="navbar navbar-dark bg-dark shadow-sm">
         <div class="container-fluid">
             <span class="navbar-brand"><i class="bi bi-cpu"></i> AltMill Firmware Portal</span>
-            <div id="usb-controls">
-                <button id="connect" class="btn btn-primary btn-sm"><i class="bi bi-usb-drive"></i> Select Device</button>
-            </div>
+            <button id="connect" class="btn btn-primary btn-sm"><i class="bi bi-usb-drive"></i> Select DFU Device</button>
         </div>
     </nav>
 
     <div id="app-container">
-        <!-- Sidebar: Automatic Variant Listing -->
+        <!-- Hidden elements to satisfy dfu-util.js expectations -->
+        <form id="configForm" style="display:none;">
+            <input type="file" id="firmwareFile">
+            <button id="detach"></button>
+        </form>
+
         <div id="sidebar">
-            <h5 class="mb-3">Available Variants (.hex)</h5>
+            <h5 class="mb-3">Available Builds (.hex)</h5>
             <div id="loading-manifest" class="text-center p-4">
-                <div class="spinner-border spinner-border-sm text-primary"></div> Loading builds...
+                <div class="spinner-border spinner-border-sm text-primary"></div>
             </div>
             <div id="variant-list"></div>
         </div>
 
-        <!-- Main: Flasher Controls and Log -->
         <div id="main-content">
             <div class="card shadow-sm mb-3">
                 <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <h6 class="mb-1">Active Firmware: <span id="current-fw-name" class="text-primary">None Selected</span></h6>
+                    <div class="row align-items-center">
+                        <div class="col-md-7">
+                            <h6 class="mb-1 text-muted small uppercase fw-bold">Target Firmware</h6>
+                            <h5 id="current-fw-name" class="mb-1">None Selected</h5>
                             <div class="status-bar" id="status">Disconnected</div>
                         </div>
-                        <button id="download" class="btn btn-success btn-lg" disabled>
-                            <i class="bi bi-lightning-fill"></i> FLASH FIRMWARE
-                        </button>
+                        <div class="col-md-5 text-end">
+                            <button id="download" class="btn btn-success btn-lg px-4" disabled>
+                                <i class="bi bi-lightning-fill"></i> FLASH TO BOARD
+                            </button>
+                        </div>
                     </div>
 
                     <div class="mt-3 row g-2">
-                        <div class="col-md-6">
+                        <div class="col-6 col-md-3">
                             <label class="small fw-bold">Transfer Size</label>
                             <input type="number" id="transferSize" class="form-control form-control-sm" value="2048">
                         </div>
-                        <div class="col-md-6" id="dfuseFields">
+                        <div class="col-6 col-md-3" id="dfuseFields">
                             <label class="small fw-bold">Start Address</label>
                             <input type="text" id="dfuseStartAddress" class="form-control form-control-sm" value="0x08000000">
+                        </div>
+                        <div class="col-12 col-md-6 text-end align-self-end">
+                             <div id="usbInfo" class="small text-muted" style="font-size: 10px; white-space: pre;"></div>
+                             <div id="dfuInfo" class="small text-muted" style="font-size: 10px;"></div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <progress id="downloadProgress" class="progress w-100 mb-2" value="0" max="100" hidden></progress>
-            <textarea id="downloadLog" class="form-control" readonly placeholder="System log..."></textarea>
+            <progress id="downloadProgress" class="progress w-100 mb-1" style="height: 10px;" value="0" max="100" hidden></progress>
+            <textarea id="downloadLog" class="form-control" readonly></textarea>
 
-            <div class="mt-2 small text-muted">
-                <i class="bi bi-info-circle"></i> <strong>Note:</strong> Board must be in <strong>DFU mode</strong> (Hold BOOT0 and press Reset) to flash.
+            <div class="mt-2 d-flex justify-content-between align-items-center">
+                <span class="small text-muted"><i class="bi bi-info-circle"></i> Put board in <strong>DFU mode</strong> before flashing.</span>
+                <a href="https://github.com/petervanderwalt/grblhal_sienci_compile" class="small text-decoration-none" target="_blank">View Source <i class="bi bi-github"></i></a>
             </div>
         </div>
     </div>
 
-    <!-- Interface Dialog for multiple alts -->
+    <!-- Interface Dialog -->
     <dialog id="interfaceDialog" class="p-4 border-0 shadow rounded">
         <h6>Select DFU Interface</h6>
         <form id="interfaceForm" method="dialog">
@@ -93,37 +105,51 @@
     </dialog>
 
     <script>
-        // Use the existing dfu-util.js logic but hook into the variant list
-        async function loadVariant(url, filename) {
+        async function loadVariant(url, filename, element) {
+            // UI Feedback
+            document.querySelectorAll('.variant-card').forEach(c => c.classList.remove('active'));
+            element.classList.add('active');
             document.getElementById('current-fw-name').textContent = filename;
+
             const log = document.getElementById('downloadLog');
-            log.value += `[INFO] Downloading ${filename}...\n`;
+            log.value += `[INFO] Downloading: ${filename}\n`;
 
             try {
                 const response = await fetch(url);
                 const hexText = await response.text();
 
-                // Use the parser from your dfu-util.js
-                // Note: we assume parseIntelHex is globally available from dfu-util.js
-                const result = parseIntelHex(hexText);
-                window.firmwareFile = result.data; // Store globally for the flash button
+                // Call the globally exported function from modified dfu-util.js
+                const result = window.parseIntelHex(hexText);
+                window.firmwareFile = result.data;
                 window.isFirmwareLoaded = true;
 
-                log.value += `[INFO] Parsed HEX. Size: ${window.firmwareFile.byteLength} bytes\n`;
+                log.value += `[INFO] File Parsed. Size: ${window.firmwareFile.byteLength} bytes\n`;
 
-                // Update Address field if DfuSe
                 if (result.startAddress) {
                     document.getElementById('dfuseStartAddress').value = "0x" + result.startAddress.toString(16);
+                    // Trigger the change event so dfu-util.js updates its internal address
+                    document.getElementById('dfuseStartAddress').dispatchEvent(new Event('change'));
                 }
 
-                // Check if we can enable flash button
-                if (window.isDeviceReady) {
-                    document.getElementById('download').disabled = false;
-                }
+                checkReadyToFlash();
             } catch (e) {
                 log.value += `[ERROR] Failed to load HEX: ${e.message}\n`;
+                console.error(e);
             }
         }
+
+        function checkReadyToFlash() {
+            // window.isDeviceReady is updated by dfu-util.js
+            const flashBtn = document.getElementById('download');
+            if (window.isDeviceReady && window.isFirmwareLoaded) {
+                flashBtn.disabled = false;
+            } else {
+                flashBtn.disabled = true;
+            }
+        }
+
+        // Poll for device status from the background script
+        setInterval(checkReadyToFlash, 500);
 
         async function fetchManifest() {
             try {
@@ -132,26 +158,22 @@
                 const container = document.getElementById('variant-list');
                 document.getElementById('loading-manifest').style.display = 'none';
 
-                // Filter for .hex files only
                 const hexFiles = data.files.filter(f => f.name.toLowerCase().endsWith('.hex'));
-
                 hexFiles.sort((a, b) => b.name.localeCompare(a.name));
 
                 hexFiles.forEach(file => {
                     const date = new Date(file.date).toLocaleString();
                     const card = document.createElement('div');
                     card.className = 'variant-card';
+                    card.onclick = (e) => loadVariant(file.path, file.name, card);
                     card.innerHTML = `
-                        <div class="fw-bold mb-1" style="word-break: break-all;">${file.name}</div>
-                        <div class="build-date mb-2"><i class="bi bi-calendar3"></i> Last Modified: ${date}</div>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-outline-primary btn-sm w-100" onclick="loadVariant('${file.path}', '${file.name}')">
-                                <i class="bi bi-box-arrow-in-down"></i> Load for Flash
-                            </button>
-                            <a href="${file.path}" class="btn btn-light btn-sm" title="Download HEX">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="fw-bold small" style="word-break: break-all; line-height:1.2;">${file.name}</div>
+                            <a href="${file.path}" class="text-muted ms-2" title="Download HEX" onclick="event.stopPropagation();">
                                 <i class="bi bi-download"></i>
                             </a>
                         </div>
+                        <div class="build-date mt-2"><i class="bi bi-clock-history"></i> ${date}</div>
                     `;
                     container.appendChild(card);
                 });
