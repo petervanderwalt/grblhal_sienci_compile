@@ -107,23 +107,33 @@ def download_profile(url):
 
 def format_build_flags(defines):
     flags = []
-    for k, v in defines.items():
-        # Clean up values: if it's a string, keep it; if it's a bool, handle -D flag
+    # Sort keys for a clean platformio.ini output
+    for k in sorted(defines.keys()):
+        v = defines[k]
         if isinstance(v, bool):
             if v:
                 flags.append(f"-D {k}")
         else:
+            # This handles strings (like AXIS3_LETTER: "'A'") and numbers correctly
             flags.append(f"-D {k}={v}")
-    # Indent by 4 spaces to match the slb_ext environment style
+
     return "\n    ".join(flags)
 
-def generate_env(variant):
+def generate_env(variant, global_defines):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
-    defines = variant.get("defines", {})
 
-    # Generate the 100+ machine defines from the JSON
-    v_flags = format_build_flags(defines)
+    # 1. Start with global machine defines
+    variant_defines = global_defines.copy()
+
+    # 2. Merge variant-specific symbols (e.g. N_AXIS)
+    variant_defines.update(variant.get("default_symbols", {}))
+
+    # 3. Merge variant-specific setting defaults (e.g. TRAVEL limits)
+    variant_defines.update(variant.get("setting_defaults", {}))
+
+    # Convert dictionary to PlatformIO build flags
+    v_flags = format_build_flags(variant_defines)
 
     return textwrap.dedent(f"""
     ; {display_name}
@@ -151,6 +161,15 @@ def generate_env(variant):
 
 def main():
     profile = download_profile(PROFILE_URL)
+
+    # Extract global machine data
+    machine = profile.get("machine", {})
+    global_symbols = machine.get("default_symbols", {})
+    global_settings = machine.get("setting_defaults", {})
+
+    # Merge global data (Settings override symbols if there's a collision)
+    global_defines = {**global_symbols, **global_settings}
+
     variants = profile.get("variants")
     if not variants:
         raise RuntimeError("No variants found in profile")
@@ -162,15 +181,12 @@ def main():
     ]
 
     for variant in variants:
-        sections.append(generate_env(variant))
+        sections.append(generate_env(variant, global_defines))
 
     content = "\n\n".join(sections)
     OUTPUT_INI.write_text(content)
 
-    # Log the output so you can verify it in the GitHub Action console
-    print("--- GENERATED PLATFORMIO.INI ---")
-    print(content)
-    print("--- END GENERATED FILE ---")
+    print(f"Successfully generated {OUTPUT_INI} with {len(variants)} environments.")
 
 if __name__ == "__main__":
     main()
