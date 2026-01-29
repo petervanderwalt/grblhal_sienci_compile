@@ -1,9 +1,7 @@
-name: Build GrblHAL Firmware
+name: Build and Deploy Firmware
 
 on:
   push:
-    branches: [ "main", "master" ]
-  pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
@@ -15,82 +13,59 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout this repo (contains generate_pio_config.py)
       - name: Checkout Config Repo
         uses: actions/checkout@v4
 
-      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. Install PlatformIO
       - name: Install PlatformIO
         run: pip install -U platformio
 
-      # 4. Clone grblHAL STM32F4xx driver
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Generate platformio.ini from profile
-      - name: Generate PlatformIO Config
-        run: |
-          python generate_pio_config.py
-          cp platformio.ini STM32F4xx/
-
-      # 6. Inject board + extras
       - name: Inject Board Definitions and Plugins
         run: |
           mkdir -p STM32F4xx/boards
           cp genericSTM32F412VG.json STM32F4xx/boards/
+          if [ -d "3rdparty" ]; then cp -r 3rdparty STM32F4xx/; fi
+          if [ -f "extra_script.py" ]; then cp extra_script.py STM32F4xx/ ; fi
 
-          if [ -d "3rdparty" ]; then
-            cp -r 3rdparty STM32F4xx/
-          fi
+      # --- BASELINE BUILD (Using your original file) ---
+      # This confirms if the linking issue is in the generator or the environment
+      - name: Run Baseline Build (Original Config)
+        if: hashFiles('platformio.ini.orig') != ''
+        working-directory: STM32F4xx
+        run: |
+          cp ../platformio.ini.orig platformio.ini
+          pio run -e slb_ext
 
-          if [ -f "extra_script.py" ]; then
-            cp extra_script.py STM32F4xx/
-          fi
+      # --- GENERATED BUILD ---
+      - name: Generate and Log PlatformIO Config
+        run: |
+          python generate_pio_config.py
+          cp platformio.ini STM32F4xx/
 
-      # 7. Build ALL environments
-      - name: Compile Firmware (all variants)
+      - name: Compile All Variants
         working-directory: STM32F4xx
         run: pio run
 
-      # 8. Prepare Web Directory
       - name: Prepare Web Directory
         run: |
-          # Create a 'public' folder to serve as the website root
           mkdir -p public/firmware
-
-          # DISABLE JEKYLL (Crucial Step)
           touch public/.nojekyll
-
-          # Copy the compiled binaries to the public/firmware folder
-          # We use find to locate them in the deep PIO structure and copy them out
-          find STM32F4xx/.pio/build -name "*.bin" -exec cp {} public/firmware/ \;
           find STM32F4xx/.pio/build -name "*.hex" -exec cp {} public/firmware/ \;
+          if [ -d "web_interface" ]; then cp web_interface/* public/; fi
 
-          # Copy the web interface HTML (assuming you created it locally)
-          # If you don't have this file yet, we create a placeholder
-          if [ -f "web_interface/index.html" ]; then
-            cp web_interface/index.html public/
-            cp web_interface/*.js public/
-          else
-            echo "<html><body><h1>Firmware Repository</h1><p>See /firmware_manifest.json for data</p></body></html>" > public/index.html
-          fi
-
-      # 9. Generate JSON Manifest
       - name: Generate JSON Manifest
         run: python generate_manifest.py
 
-
-      # 10. Deploy
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
-          # This keeps the history clean, essentially publishing only the latest build
           force_orphan: true
