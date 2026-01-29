@@ -12,7 +12,6 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-# Cleaned up to match your working file structure
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -104,11 +103,20 @@ def download_profile(url):
         return json.loads(resp.read().decode())
 
 def format_build_flags(defines):
+    """Formats dict into -D KEY=VALUE with mapping and ASCII conversion."""
     lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
-        # Map SIENCI_ATCI from JSON to ATCI_ENABLE for the code
+
+        # 1. Map Plugin Name
         key = "ATCI_ENABLE" if k == "SIENCI_ATCI" else k
+
+        # 2. Convert Axis Letters to ASCII (e.g., 'A' -> 65)
+        # This fixes the "Illegal axis letter" error
+        if key.endswith("_LETTER") and isinstance(v, str):
+            char = v.replace("'", "").strip() # Remove any existing single quotes
+            if len(char) == 1:
+                v = ord(char) # Convert 'A' to 65, 'B' to 66, etc.
 
         if isinstance(v, bool):
             if v: lines.append(f"  -D {key}")
@@ -181,7 +189,8 @@ def main():
         content += generate_env(variant, global_defines)
 
     OUTPUT_INI.write_text(content)
-    print(content) # Log to console
+    print("--- GENERATED PLATFORMIO.INI ---")
+    print(content)
     print(f"\\nGenerated {OUTPUT_INI} successfully with {len(variants)} variants.")
 
 if __name__ == "__main__":
