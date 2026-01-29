@@ -2,18 +2,20 @@ import datetime
 Import("env")
 
 # 1. Generate the realtime date
-# Format: 20260115-1430
+# Format: 20260129-1606
 build_date = datetime.datetime.now().strftime("%Y%m%d-%H%M")
 
-# 2. Get the variables from platformio.ini
-custom_ver = env.GetProjectOption("custom_prog_version")     # SLB_EXT
+# 2. Get the variables from platformio.ini and the Environment
+custom_ver = env.GetProjectOption("custom_prog_version")  # e.g., SLB_EXT
+variant_name = env["PIOENV"]                              # e.g., altmill_mk2_4x4_atc...
 
 # 3. Construct the new program name
-# We removed the extra "%s" and the extra "." since you removed the driver version
-# Result Example: SLB_EXT_20260115-1430
-new_prog_name = "%s_%s" % (custom_ver, build_date)
+# Format: SLB_EXT_<VARIANT_NAME>_<DATE>
+# Example: SLB_EXT_altmill_mk2_4x4_atc_firmware..._20260129-1606
+new_prog_name = "%s_%s_%s" % (custom_ver, variant_name, build_date)
 
 # 4. Apply the new name to the environment
+print(f"Renaming output firmware to: {new_prog_name}")
 env.Replace(PROGNAME=new_prog_name)
 env.Replace(custom_board_name=new_prog_name)
 

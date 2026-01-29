@@ -60,9 +60,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: grblHAL-altmill-firmware
-          # Update path to find ANY .bin, .hex, or .elf file, not just 'firmware.*'
-          path: |
-            STM32F4xx/.pio/build/**/*.bin
-            STM32F4xx/.pio/build/**/*.hex
-            STM32F4xx/.pio/build/**/*.elf
+          path: STM32F4xx/.pio/build/**/firmware.*
           if-no-files-found: error
