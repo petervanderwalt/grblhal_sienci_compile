@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import json
-import textwrap
 from pathlib import Path
 import urllib.request
 import re
@@ -13,7 +12,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-# MATCHING YOUR WORKING FILE EXACTLY
+# MATCHING YOUR WORKING [common], [wiznet], and [env] EXACTLY
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -105,15 +104,19 @@ def download_profile(url):
         return json.loads(resp.read().decode())
 
 def format_build_flags(defines):
-    """Formats dict into -D KEY=VALUE with leading spaces for PIO config."""
+    """Formats dict into -D KEY=VALUE with leading spaces and escaped quotes for character literals."""
     lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
         if isinstance(v, bool):
             if v:
                 lines.append(f"  -D {k}")
+        elif isinstance(v, str) and v.startswith("'") and v.endswith("'"):
+            # CRITICAL FIX: GrblHAL character literals (like 'A') need escaped quotes
+            # This turns "'A'" in JSON into "\'A\'" in the ini file
+            char = v[1:-1]
+            lines.append(f"  -D {k}=\\'{char}\\'")
         else:
-            # Handle strings like "'A'" or numeric values
             lines.append(f"  -D {k}={v}")
     return "\n".join(lines)
 
@@ -121,15 +124,13 @@ def generate_env(variant, global_defines):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
 
-    # Merge levels: Global Machine -> Variant Symbols -> Variant Settings
+    # Deep merge: Machine Defaults -> Variant Symbols -> Variant Settings
     merged_defines = global_defines.copy()
     merged_defines.update(variant.get("default_symbols", {}))
     merged_defines.update(variant.get("setting_defaults", {}))
 
-    # Format the defines into the -D list
     v_flags = format_build_flags(merged_defines)
 
-    # Use a raw string to prevent any indentation stripping logic from breaking the PIO format
     return f"""
 ; {display_name}
 [env:{env_name}]
@@ -160,8 +161,11 @@ def main():
     profile = download_profile(PROFILE_URL)
 
     machine = profile.get("machine", {})
-    # Get the global machine defaults
-    global_defines = {**machine.get("default_symbols", {}), **machine.get("setting_defaults", {})}
+    # Pull both machine-level defaults
+    global_defines = {
+        **machine.get("default_symbols", {}),
+        **machine.get("setting_defaults", {})
+    }
 
     variants = profile.get("variants")
     if not variants:
@@ -169,15 +173,15 @@ def main():
 
     env_names = [sanitize_env_name(v["name"]) for v in variants]
 
-    # Generate Header
+    # Format Header
     content = STATIC_HEADER.format(default_envs=", ".join(env_names)).strip() + "\n"
 
-    # Generate Environments
+    # Append Variants
     for variant in variants:
         content += generate_env(variant, global_defines)
 
     OUTPUT_INI.write_text(content)
-    print(f"Generated {OUTPUT_INI} successfully.")
+    print(f"Generated {OUTPUT_INI} successfully with {len(variants)} variants.")
 
 if __name__ == "__main__":
     main()
