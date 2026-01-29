@@ -7,59 +7,206 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+# Grant permissions to write to the repository (needed for GitHub Pages deployment)
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the repository containing your platformio.ini, scripts, and board definition
+      # 1. Checkout the repository
       - name: Checkout Custom Config
         uses: actions/checkout@v4
 
-      # 2. Setup Python (Required for PlatformIO)
+      # 2. Setup Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 3. Install PlatformIO
-      - name: Install PlatformIO
-        run: pip install -U platformio
+      # 3. Install PlatformIO and Requests (for the config script)
+      - name: Install Dependencies
+        run: |
+          pip install -U platformio
+          pip install requests
 
       # 4. Clone the specific grblHAL STM32F4xx repository
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Inject Configuration, Plugins, AND Custom Board Definition
-      - name: Inject Configuration and Plugins
+      # 5. Clone 3rd Party Plugins (REPLACES LOCAL COPY)
+      - name: Install Plugins
         run: |
-          echo "Copying configuration files..."
-          cp platformio.ini STM32F4xx/
-          cp extra_script.py STM32F4xx/
+          mkdir -p STM32F4xx/3rdparty
+          cd STM32F4xx/3rdparty
 
-          # --- FIX: Create 'boards' folder and move the JSON file there ---
+          echo "Cloning Sienci ATCI Plugin..."
+          git clone https://github.com/Sienci-Labs/sienci-atci-plugin.git
+
+          echo "Cloning GrblHAL RGB Plugin..."
+          git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
+
+      # 6. Generate PlatformIO Config Dynamically
+      - name: Generate Dynamic PlatformIO Config
+        shell: python
+        run: |
+          import requests
+          import json
+          import os
+
+          # URL to the profile
+          PROFILE_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/refs/heads/main/profiles/altmill.json"
+
+          try:
+              print(f"Fetching profile from {PROFILE_URL}...")
+              response = requests.get(PROFILE_URL)
+              response.raise_for_status()
+              profile_data = response.json()
+
+              # Extract flags/definitions from the JSON
+              # Note: Adjust 'definitions' key based on actual JSON structure.
+              # If the JSON is a flat list of settings, use profile_data directly.
+              # Assuming standard grblHAL profile structure where keys are definitions.
+              build_flags = []
+
+              # Add standard flags needed for this board/driver
+              build_flags.append("-DSTM32F412Zx")
+              build_flags.append("-DUSE_USB_CDC")
+
+              # Convert JSON keys to -D flags
+              # We exclude metadata keys if present (like 'info', 'version')
+              ignore_keys = ['info', 'version', 'name', 'description']
+
+              for key, value in profile_data.items():
+                  if key not in ignore_keys:
+                      # Handle boolean/integer/string values
+                      if value is True:
+                          build_flags.append(f"-D{key}")
+                      elif value is False:
+                          pass # Don't define it
+                      elif isinstance(value, str):
+                          build_flags.append(f'-D{key}=\\"{value}\\"')
+                      else:
+                          build_flags.append(f"-D{key}={value}")
+
+              flags_str = " ".join(build_flags)
+
+              # Create the platformio.ini content
+              pio_content = f"""
+          [platformio]
+          src_dir = .
+          include_dir = .
+
+          [env:slb_ext]
+          platform = ststm32
+          board = genericSTM32F412VG
+          framework = arduino
+          board_build.ldscript = STM32F412VGTx_FLASH.ld
+
+          # Libraries and Plugins
+          lib_extra_dirs = 3rdparty
+
+          # Build Flags generated from JSON profile
+          build_flags =
+              {flags_str}
+              -I.
+
+          # Upload settings (optional for CI, but good for local)
+          upload_protocol = dfu
+          """
+
+              # Write to file
+              with open("STM32F4xx/platformio.ini", "w") as f:
+                  f.write(pio_content)
+
+              print("Successfully generated STM32F4xx/platformio.ini")
+              print("Flags used:", flags_str)
+
+          except Exception as e:
+              print(f"Error generating config: {e}")
+              exit(1)
+
+      # 7. Setup Custom Board Definition
+      - name: Setup Board Definition
+        run: |
+          # Copy extra scripts if needed (assuming locally present)
+          if [ -f "extra_script.py" ]; then cp extra_script.py STM32F4xx/; fi
+
           echo "Setting up custom board definition..."
           mkdir -p STM32F4xx/boards
+          # Ensure this file exists in your repo
           cp genericSTM32F412VG.json STM32F4xx/boards/
-          # --------------------------------------------------------------
 
-          # Copy 3rdparty plugins if they exist
-          if [ -d "3rdparty" ]; then
-            echo "Copying 3rdparty plugins..."
-            cp -r 3rdparty STM32F4xx/
-          else
-            echo "::warning:: '3rdparty' folder not found! Build will likely fail due to missing plugins."
-          fi
-
-      # 6. Run PlatformIO to compile
+      # 8. Run PlatformIO to compile (Piping output to log for web display)
       - name: Compile Firmware
         working-directory: STM32F4xx
-        run: pio run -e slb_ext
+        run: |
+          # Run build and pipe output to both console and a log file
+          pio run -e slb_ext 2>&1 | tee build.log
 
-      # 7. Upload the resulting HEX file as an artifact
+      # 9. Prepare files for GitHub Pages
+      - name: Prepare Web Assets
+        run: |
+          mkdir -p public
+
+          # Move Firmware
+          cp STM32F4xx/.pio/build/slb_ext/*.hex public/firmware.hex
+
+          # Move Log
+          cp STM32F4xx/build.log public/build_log.txt
+
+          # Generate HTML
+          TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
+          cat > public/index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>AltMill Firmware Build</title>
+            <style>
+              body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; }
+              h1 { color: #333; }
+              .card { background: #f4f4f4; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+              .btn { display: inline-block; background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; }
+              .log { background: #222; color: #0f0; padding: 15px; overflow-x: auto; font-family: monospace; max-height: 400px; overflow-y: scroll; }
+            </style>
+          </head>
+          <body>
+            <h1>GrblHAL Firmware Build (AltMill)</h1>
+
+            <div class="card">
+              <h2>Latest Build Artifacts</h2>
+              <p><strong>Build Date:</strong> ${TIMESTAMP}</p>
+              <br>
+              <a href="firmware.hex" class="btn">Download Firmware (.hex)</a>
+            </div>
+
+            <div class="card">
+              <h2>Build Configuration</h2>
+              <p>Generated dynamically from <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json">Sienci-Labs Profile</a>.</p>
+            </div>
+
+            <h3>Last Compilation Log</h3>
+            <div class="log">
+              <pre>$(cat public/build_log.txt)</pre>
+            </div>
+          </body>
+          </html>
+          EOF
+
+      # 10. Upload Artifact to Actions Tab (Backup)
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: SLB_EXT_Firmware
-          path: STM32F4xx/.pio/build/slb_ext/*.hex
-          if-no-files-found: error
+          path: public/firmware.hex
+
+      # 11. Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: public
