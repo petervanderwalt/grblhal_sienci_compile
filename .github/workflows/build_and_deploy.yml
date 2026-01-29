@@ -7,7 +7,6 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-# Permissions for GitHub Pages deployment
 permissions:
   contents: write
   pages: write
@@ -18,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout your repository (contains genericSTM32F412VG.json and config)
+      # 1. Checkout your repo (contains genericSTM32F412VG.json)
       - name: Checkout Custom Config
         uses: actions/checkout@v4
 
@@ -28,7 +27,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 3. Install Dependencies
+      # 3. Install PlatformIO and Requests
       - name: Install Dependencies
         run: |
           pip install -U platformio requests
@@ -37,7 +36,7 @@ jobs:
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Clone 3rd Party Plugins (Online Repos)
+      # 5. Clone 3rd Party Plugins into the driver folder
       - name: Install Plugins
         run: |
           mkdir -p STM32F4xx/3rdparty
@@ -50,6 +49,7 @@ jobs:
           git clone https://github.com/Sienci-Labs/grblhal-rgb-plugin.git
 
       # 6. Generate PlatformIO Config Dynamically
+      # This script reconstructs your Reference INI and injects the JSON profile values
       - name: Generate Dynamic PlatformIO Config
         shell: python
         run: |
@@ -57,164 +57,250 @@ jobs:
           import json
           import os
 
-          # URL to the profile
+          # 1. Fetch the JSON Profile
           PROFILE_URL = "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/refs/heads/main/profiles/altmill.json"
 
+          print(f"Fetching profile from {PROFILE_URL}...")
           try:
-              print(f"Fetching profile from {PROFILE_URL}...")
               response = requests.get(PROFILE_URL)
               response.raise_for_status()
               profile_data = response.json()
+          except Exception as e:
+              print(f"Failed to fetch profile: {e}")
+              exit(1)
 
-              build_flags = []
+          # 2. Process JSON into Build Flags
+          # We ignore metadata keys.
+          ignore_keys = ['info', 'version', 'name', 'description']
+          json_flags = []
 
-              # --- ESSENTIAL FLAGS FOR THIS DRIVER/BOARD ---
-              # These ensure the STM32F412 HAL and USB stack are active
-              build_flags.append("-DSTM32F412Zx")
-              build_flags.append("-DUSE_USB_CDC")
+          for key, value in profile_data.items():
+              if key not in ignore_keys:
+                  if value is True:
+                      json_flags.append(f"-D{key}")
+                  elif value is False:
+                      pass
+                  elif isinstance(value, str):
+                      json_flags.append(f'-D{key}=\\"{value}\\"')
+                  else:
+                      json_flags.append(f"-D{key}={value}")
 
-              # Keys to ignore from the JSON profile
-              ignore_keys = ['info', 'version', 'name', 'description']
+          json_flags_str = "\n    ".join(json_flags)
 
-              # Parse JSON and create -D flags
-              for key, value in profile_data.items():
-                  if key not in ignore_keys:
-                      if value is True:
-                          build_flags.append(f"-D{key}")
-                      elif value is False:
-                          pass
-                      elif isinstance(value, str):
-                          # Escape quotes for string definitions
-                          build_flags.append(f'-D{key}=\\"{value}\\"')
-                      else:
-                          build_flags.append(f"-D{key}={value}")
+          # 3. Define the Reference INI Structure
+          # We include the [common], [eth], [wiznet] blocks exactly as you provided.
+          # In [env:slb_ext], we include the HARDWARE flags, and append the JSON flags.
 
-              flags_str = " ".join(build_flags)
-
-              # Generate platformio.ini content
-              # Note: 'extra_scripts' is CRITICAL for fixing variant_generic.h errors
-              pio_content = f"""
+          ini_content = f"""
           [platformio]
-          src_dir = .
-          include_dir = .
+          include_dir = Inc
+          src_dir = Src
           boards_dir = boards
+
+          [common]
+          build_flags =
+            -I .
+            -I boards
+            -I FatFs
+            -I FatFs/STM
+            -I Drivers/FATFS/Target
+            -I Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+            -I Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+            -I USB_DEVICE/App
+            -I USB_DEVICE/Target
+            -D OVERRIDE_MY_MACHINE
+            -D _USE_IOCTL=1
+            -D _USE_WRITE=1
+            -D _VOLUMES=1
+            -Wl,-u,_printf_float
+            -Wl,-u,_scanf_float
+          lib_deps =
+            boards
+            bluetooth
+            grbl
+            keypad
+            laser
+            motors
+            trinamic
+            odometer
+            openpnp
+            fans
+            plugins
+            FatFs
+            sdcard
+            spindle
+            embroidery
+            Drivers/FATFS/App
+            Drivers/FATFS/Target
+            Middlewares/ST/STM32_USB_Device_Library/Core
+            Middlewares/ST/STM32_USB_Device_Library/Class
+            USB_DEVICE/App
+            USB_DEVICE/Target
+          lib_extra_dirs =
+            .
+            boards
+            FatFs
+            Middlewares/ST/STM32_USB_Device_Library
+            USB_DEVICE
+
+          [eth_networking]
+          build_flags =
+            -I LWIP/App
+            -I LWIP/dp83848/Target
+            -I Middlewares/Third_Party/LwIP/src/include
+            -I Middlewares/Third_Party/LwIP/system
+            -I Middlewares/Third_Party/LwIP/src/include/netif
+            -I Middlewares/Third_Party/LwIP/src/include/lwip
+            -I Drivers/BSP/Components/dp83848
+          lib_deps =
+             networking
+             webui
+             LWIP/App
+             LWIP/dp83848/Target
+             Middlewares/Third_Party/LwIP
+             Drivers/BSP/Components/dp83848
+          lib_extra_dirs =
+
+          [wiznet_networking]
+          build_flags =
+            -I networking/wiznet
+            -I Middlewares/Third_Party/LwIP/src/include
+            -I Middlewares/Third_Party/LwIP/system
+            -I Middlewares/Third_Party/LwIP/src/include/netif
+            -I Middlewares/Third_Party/LwIP/src/include/lwip
+          lib_deps =
+             networking
+             webui
+             Middlewares/Third_Party/LwIP
+          lib_extra_dirs =
 
           [env:slb_ext]
           platform = ststm32
+          platform_packages = framework-stm32cubef4
+          framework = stm32cube
           board = genericSTM32F412VG
-          framework = arduino
+          upload_protocol = dfu
 
-          # Linker script (must exist in repo or be provided)
+          # Fix for variant_generic.h error
+          extra_scripts =
+            pre:extra_script.py
+            post:extra_script.py
+
           board_build.ldscript = STM32F412VGTx_FLASH.ld
 
-          # CRITICAL: Runs grblHAL setup scripts to fix include paths/variants
-          extra_scripts = pre:extra_script.py
+          lib_deps = ${{common.lib_deps}}
+            eeprom
+            ${{wiznet_networking.lib_deps}}
+            ./3rdparty/grblhal-rgb-plugin
+            ./3rdparty/sienci-atci-plugin
 
-          # Libraries
-          lib_extra_dirs = 3rdparty
+          lib_extra_dirs = ${{common.lib_extra_dirs}}
 
-          # Build Flags
-          build_flags =
-              {flags_str}
-              -I.
+          build_flags = ${{common.build_flags}}
+            ${{wiznet_networking.build_flags}}
+            -I ./3rdparty/grblhal-rgb-plugin
+            -I ./3rdparty/sienci-atci-plugin
 
-          upload_protocol = dfu
+            # --- System / Hardware Definitions (Fixed) ---
+            -D WEB_BUILD
+            -D BOARD_LONGBOARD32_EXT
+            -D USE_HAL_DRIVER
+            -D STM32F412Vx
+            -D _WIZCHIP_=5500
+            -D ETHERNET_ENABLE=1
+            -D TELNET_ENABLE=1
+            -D WEBSOCKET_ENABLE=1
+            -D FTP_ENABLE=1
+            -D USB_SERIAL_CDC=1
+
+            # --- Dynamic Profile Definitions (From JSON) ---
+            {json_flags_str}
           """
 
-              # Save to STM32F4xx folder
-              with open("STM32F4xx/platformio.ini", "w") as f:
-                  f.write(pio_content)
+          # Write to file
+          with open("STM32F4xx/platformio.ini", "w") as f:
+              f.write(ini_content)
 
-              print("Successfully generated STM32F4xx/platformio.ini")
-              print("Config Content:\n", pio_content)
+          print("Successfully generated STM32F4xx/platformio.ini")
 
-          except Exception as e:
-              print(f"Error generating config: {e}")
-              exit(1)
-
-      # 7. Inject Custom Board Definition and Scripts
+      # 7. Inject Board Config & Scripts
       - name: Inject Board Definition
         run: |
-          # Copy your custom board definition to the driver's boards folder
+          # Create boards directory in the driver
           mkdir -p STM32F4xx/boards
+
+          # Copy your custom board JSON
           cp genericSTM32F412VG.json STM32F4xx/boards/
 
-          # Ensure extra_script.py is used from the cloned repo,
-          # or overwrite it if you have a custom one in your repo root.
+          # Ensure extra_script.py is present.
+          # The repo usually has it, but if you have a custom one in your root, copy it:
           if [ -f "extra_script.py" ]; then
-            echo "Copying custom extra_script.py..."
-            cp extra_script.py STM32F4xx/
+             echo "Using custom extra_script.py"
+             cp extra_script.py STM32F4xx/
           fi
 
-      # 8. Compile Firmware
+      # 8. Compile
       - name: Compile Firmware
         working-directory: STM32F4xx
         run: |
-          # Pipe output to log file for the web page
+          # Use stm32cube framework as requested in reference INI
           pio run -e slb_ext 2>&1 | tee build.log
 
-      # 9. Prepare GitHub Pages Content
+      # 9. Prepare GitHub Pages
       - name: Prepare Web Assets
-        if: always() # Run even if compile fails (to show log)
+        if: always()
         run: |
           mkdir -p public
 
-          # Copy Firmware if it exists
           if [ -f "STM32F4xx/.pio/build/slb_ext/firmware.hex" ]; then
             cp STM32F4xx/.pio/build/slb_ext/firmware.hex public/firmware.hex
             STATUS="Success"
-            COLOR="#28a745"
+            COLOR="#28a745" # Green
           else
             STATUS="Failed"
-            COLOR="#dc3545"
+            COLOR="#dc3545" # Red
           fi
 
-          # Copy Log
           cp STM32F4xx/build.log public/build_log.txt
 
-          # Generate HTML Index
           TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
+
+          # Create HTML
           cat > public/index.html <<EOF
           <!DOCTYPE html>
           <html>
           <head>
             <title>AltMill Firmware Build</title>
             <style>
-              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f0f2f5; }
-              header { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-              h1 { margin: 0; color: #333; }
-              .badge { background: ${COLOR}; color: white; padding: 5px 10px; border-radius: 4px; font-size: 0.8em; vertical-align: middle; }
-              .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-              .btn { display: inline-block; background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; }
-              .btn:hover { background: #0056b3; }
-              .log-container { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; max-height: 600px; overflow-y: auto; }
-              pre { margin: 0; }
+              body { font-family: sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f4f4; }
+              .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-bottom: 5px solid ${COLOR}; }
+              .card { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+              .btn { background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; }
+              pre { background: #222; color: #eee; padding: 15px; overflow: auto; max-height: 500px; }
             </style>
           </head>
           <body>
-            <header>
-              <h1>AltMill Firmware Builder <span class="badge">${STATUS}</span></h1>
-              <p>Last run: ${TIMESTAMP}</p>
-            </header>
-
-            <div class="card">
-              <h2>Downloads</h2>
-              ${STATUS == 'Success' ? '<p>Firmware compiled successfully.</p><a href="firmware.hex" class="btn">Download firmware.hex</a>' : '<p>Build failed. Check the log below.</p>'}
-              <br><br>
-              <p><small>Profile used: <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json" target="_blank">altmill.json</a></small></p>
+            <div class="header">
+              <h1>Build Status: <span style="color:${COLOR}">${STATUS}</span></h1>
+              <p>Timestamp: ${TIMESTAMP}</p>
             </div>
 
             <div class="card">
-              <h2>Compilation Log</h2>
-              <div class="log-container">
-                <pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' public/build_log.txt)</pre>
-              </div>
+              <h3>Artifacts</h3>
+              ${STATUS == 'Success' ? '<a href="firmware.hex" class="btn">Download Firmware (.hex)</a>' : 'No firmware generated.'}
+              <br><br>
+              <small>Profile: <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json">altmill.json</a></small>
+            </div>
+
+            <div class="card">
+              <h3>Build Log</h3>
+              <pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' public/build_log.txt)</pre>
             </div>
           </body>
           </html>
           EOF
 
-      # 10. Upload Artifact to GitHub Actions Run
+      # 10. Upload Artifacts
       - name: Upload Artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -222,7 +308,7 @@ jobs:
           name: SLB_EXT_Firmware
           path: public/firmware.hex
 
-      # 11. Deploy to GitHub Pages
+      # 11. Deploy
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
