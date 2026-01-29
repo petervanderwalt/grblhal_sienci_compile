@@ -2,11 +2,6 @@ var device = null;
 (function() {
     'use strict';
 
-    // Add these at the very top of the (function() { ...
-    window.isDeviceReady = false;
-    window.isFirmwareLoaded = false;
-    window.firmwareFile = null;
-
     function hex4(n) {
         let s = n.toString(16)
         while (s.length < 4) {
@@ -251,7 +246,7 @@ var device = null;
         };
     }
 
-    function window.parseIntelHex(hex) {
+    function parseIntelHex(hex) {
         const lines = hex.split(/\r?\n/);
         let extendedLinearAddress = 0;
         const segments = [];
