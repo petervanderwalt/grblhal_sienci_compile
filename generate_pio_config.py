@@ -60,7 +60,6 @@ lib_deps =
   USB_DEVICE/Target
 lib_extra_dirs =
   .
-  boards
   FatFs
   Middlewares/ST/STM32_USB_Device_Library
   USB_DEVICE
