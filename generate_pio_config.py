@@ -15,8 +15,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
-# WE USE YOUR EXACT WORKING CONFIGURATION AS THE BASE
-# This ensures all include paths (-I), library deps, and extra dirs match the working file.
+# --- 1. STATIC HEADER (Matches your working file exactly) ---
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -87,7 +86,6 @@ lib_extra_dirs =
 platform = ststm32
 platform_packages = framework-stm32cubef4
 framework = stm32cube
-# Do not produce .a files for lib deps
 lib_archive = no
 lib_ldf_mode = off
 extra_scripts =
@@ -116,23 +114,24 @@ def download_profile(url):
 def format_build_flags(defines):
     flags = []
     for k, v in defines.items():
+        # Indent for the ini file
         if isinstance(v, bool):
             if v:
                 flags.append(f"-D {k}")
         else:
             flags.append(f"-D {k}={v}")
-    # Indent specifically for the INI format
-    return "\n    ".join(flags)
+    return "\n      ".join(flags)
 
 def generate_env(variant):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
     defines = variant.get("defines", {})
 
-    variant_specific_flags = format_build_flags(defines)
+    variant_flags = format_build_flags(defines)
 
-    # This structure mirrors exactly the [env:slb_ext] from your working file.
-    # It inherits ${common.build_flags} and ${wiznet_networking.build_flags}
+    # --- CRITICAL FIX: Hardcode the Hardware Flags here ---
+    # These match your working [env:slb_ext] configuration
+    # If these are missing, generic_map.h fails and HAL fails.
     return textwrap.dedent(f"""
     ; {display_name}
     [env:{env_name}]
@@ -145,7 +144,10 @@ def generate_env(variant):
       -I ./3rdparty/grblhal-rgb-plugin
       -I ./3rdparty/grblhal-keepout-plugin
       -D WEB_BUILD
-      {variant_specific_flags}
+      -D BOARD_LONGBOARD32_EXT
+      -D STM32F412Vx
+      -D USE_HAL_DRIVER
+      {variant_flags}
 
     lib_deps = ${{common.lib_deps}}
       eeprom
@@ -158,24 +160,31 @@ def generate_env(variant):
 
 def main(build=False):
     profile = download_profile(PROFILE_URL)
-
     variants = profile.get("variants")
+
     if not variants:
         raise RuntimeError("No variants found in profile")
 
     env_names = [sanitize_env_name(v["name"]) for v in variants]
 
-    # Add the static header with the default_envs populated
     sections = [
         STATIC_HEADER.format(default_envs=", ".join(env_names))
     ]
 
-    # Generate an env block for every variant in the JSON
     for variant in variants:
         sections.append(generate_env(variant))
 
-    OUTPUT_INI.write_text("\n\n".join(sections))
+    full_ini_content = "\n\n".join(sections)
+    OUTPUT_INI.write_text(full_ini_content)
+
     print(f"✔ Generated {OUTPUT_INI}")
+
+    # --- LOG OUTPUT FOR COMPARISON ---
+    print("\n" + "="*30)
+    print(" GENERATED FILE PREVIEW ")
+    print("="*30)
+    print(full_ini_content)
+    print("="*30 + "\n")
 
     if build:
         for env in env_names:
