@@ -12,6 +12,7 @@ PROFILE_URL = (
 
 OUTPUT_INI = Path("platformio.ini")
 
+# MATCHING BASELINE EXACTLY: Restore boards to lib_deps/lib_extra_dirs
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -36,6 +37,7 @@ build_flags =
   -Wl,-u,_printf_float
   -Wl,-u,_scanf_float
 lib_deps =
+  boards
   bluetooth
   grbl
   keypad
@@ -58,6 +60,7 @@ lib_deps =
   USB_DEVICE/Target
 lib_extra_dirs =
   .
+  boards
   FatFs
   Middlewares/ST/STM32_USB_Device_Library
   USB_DEVICE
@@ -69,8 +72,6 @@ build_flags =
   -I Middlewares/Third_Party/LwIP/system
   -I Middlewares/Third_Party/LwIP/src/include/netif
   -I Middlewares/Third_Party/LwIP/src/include/lwip
-  -D _WIZCHIP_=5500
-  -D ETHERNET_ENABLE=1
 lib_deps =
    networking
    webui
@@ -90,6 +91,45 @@ custom_prog_version = SLB_EXT
 custom_board_name = 'default'
 """
 
+# These are the specific flags found in your working baseline but missing from the JSON
+SYSTEM_BASELINE_FLAGS = [
+    "-D BOARD_LONGBOARD32_EXT",
+    "-D USE_HAL_DRIVER",
+    "-D STM32F412Vx",
+    "-D WEB_BUILD",
+    "-D USB_SERIAL_CDC=1",
+    "-D RTC_ENABLE=1",
+    "-D STEP_PULSE_LATENCY=1.3",
+    "-D ETH_TX_DESC_CNT=12",
+    "-D TCP_MSS=1460",
+    "-D TCP_SND_BUF=5840",
+    "-D LWIP_NUM_NETIF_CLIENT_DATA=2",
+    "-D LWIP_HTTPD_CUSTOM_FILES=0",
+    "-D MEM_SIZE=16384",
+    "-D LWIP_IGMP=1",
+    "-D LWIP_MDNS_RESPONDER=1",
+    "-D LWIP_NETIF_STATUS_CALLBACK=1",
+    "-D LWIP_HTTPD_DYNAMIC_HEADERS=1",
+    "-D LWIP_HTTPD_DYNAMIC_FILE_READ=1",
+    "-D LWIP_HTTPD_SUPPORT_V09=0",
+    "-D LWIP_HTTPD_SUPPORT_11_KEEPALIVE=1",
+    "-D LWIP_HTTPD_CGI_ADV=1",
+    "-D LWIP_HTTPD_SUPPORT_POST=1",
+    "-D LWIP_HTTPD_SUPPORT_WEBDAV=1",
+    "-D PROBE_ENABLE=1",
+    "-D MODBUS_ENABLE=3",
+    "-D MODBUS_BAUDRATE=3",
+    "-D EEPROM_ENABLE=128",
+    "-D N_EVENTS=4",
+    "-D _WIZCHIP_=5500",
+    "-D ETHERNET_ENABLE=1",
+    "-D SAFETY_DOOR_ENABLE=0",
+    "-D CONTROL_ENABLE=64",
+    "-D DEFAULT_STEP_PULSE_MICROSECONDS=5",
+    "-D DEFAULT_PARKING_ENABLE=0",
+    "-D NETWORK_IPMODE=0"
+]
+
 def sanitize_env_name(name: str) -> str:
     name = name.lower()
     name = re.sub(r"[()]", "", name)
@@ -98,25 +138,21 @@ def sanitize_env_name(name: str) -> str:
     return name.strip("_")
 
 def download_profile(url):
-    print(f"Downloading profile from {url}...")
     with urllib.request.urlopen(url) as resp:
         return json.loads(resp.read().decode())
 
 def format_build_flags(defines):
-    """Formats dict into -D KEY=VALUE with mapping and ASCII conversion."""
     lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
-
-        # 1. Map Plugin Name
+        # Map SIENCI_ATCI to ATCI_ENABLE (Baseline uses ATCI_ENABLE)
         key = "ATCI_ENABLE" if k == "SIENCI_ATCI" else k
 
-        # 2. Convert Axis Letters to ASCII (e.g., 'A' -> 65)
-        # This fixes the "Illegal axis letter" error
+        # ASCII conversion for AXIS letters (A -> 65)
         if key.endswith("_LETTER") and isinstance(v, str):
-            char = v.replace("'", "").strip() # Remove any existing single quotes
+            char = v.replace("'", "").strip()
             if len(char) == 1:
-                v = ord(char) # Convert 'A' to 65, 'B' to 66, etc.
+                v = ord(char)
 
         if isinstance(v, bool):
             if v: lines.append(f"  -D {key}")
@@ -133,6 +169,7 @@ def generate_env(variant, global_defines):
     merged_defines.update(variant.get("setting_defaults", {}))
 
     v_flags = format_build_flags(merged_defines)
+    sys_flags = "\n".join([f"  {f}" for f in SYSTEM_BASELINE_FLAGS])
 
     return f"""
 ; {display_name}
@@ -145,20 +182,7 @@ build_flags =
   ${{wiznet_networking.build_flags}}
   -I ./3rdparty/grblhal-rgb-plugin
   -I ./3rdparty/grblhal-keepout-plugin
-  -D WEB_BUILD
-  -D BOARD_LONGBOARD32_EXT
-  -D USE_HAL_DRIVER
-  -D STM32F412Vx
-  -D USB_SERIAL_CDC=1
-  -D RTC_ENABLE=1
-  -D STEP_PULSE_LATENCY=1.3
-  -D ETH_TX_DESC_CNT=12
-  -D TCP_MSS=1460
-  -D TCP_SND_BUF=5840
-  -D LWIP_HTTPD_CGI_ADV=1
-  -D LWIP_HTTPD_SUPPORT_POST=1
-  -D LWIP_HTTPD_SUPPORT_WEBDAV=1
-  -D LWIP_HTTPD_DYNAMIC_HEADERS=1
+{sys_flags}
 {v_flags}
 
 lib_deps =
@@ -179,9 +203,6 @@ def main():
     }
 
     variants = profile.get("variants")
-    if not variants:
-        raise RuntimeError("No variants found in profile")
-
     env_names = [sanitize_env_name(v["name"]) for v in variants]
 
     content = STATIC_HEADER.format(default_envs=", ".join(env_names)).strip() + "\n"
@@ -189,9 +210,7 @@ def main():
         content += generate_env(variant, global_defines)
 
     OUTPUT_INI.write_text(content)
-    print("--- GENERATED PLATFORMIO.INI ---")
     print(content)
-    print(f"\\nGenerated {OUTPUT_INI} successfully with {len(variants)} variants.")
 
 if __name__ == "__main__":
     main()
