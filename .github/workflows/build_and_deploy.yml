@@ -64,6 +64,9 @@ jobs:
           # Create a 'public' folder to serve as the website root
           mkdir -p public/firmware
 
+          # DISABLE JEKYLL (Crucial Step)
+          touch public/.nojekyll
+
           # Copy the compiled binaries to the public/firmware folder
           # We use find to locate them in the deep PIO structure and copy them out
           find STM32F4xx/.pio/build -name "*.bin" -exec cp {} public/firmware/ \;
