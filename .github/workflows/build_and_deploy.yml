@@ -7,7 +7,7 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
-# Grant permissions to write to the repository (needed for GitHub Pages deployment)
+# Permissions for GitHub Pages deployment
 permissions:
   contents: write
   pages: write
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout the repository
+      # 1. Checkout your repository (contains genericSTM32F412VG.json and config)
       - name: Checkout Custom Config
         uses: actions/checkout@v4
 
@@ -28,17 +28,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 3. Install PlatformIO and Requests (for the config script)
+      # 3. Install Dependencies
       - name: Install Dependencies
         run: |
-          pip install -U platformio
-          pip install requests
+          pip install -U platformio requests
 
-      # 4. Clone the specific grblHAL STM32F4xx repository
+      # 4. Clone the grblHAL STM32F4xx Driver
       - name: Clone STM32F4xx Driver
         run: git clone --recurse-submodules https://github.com/grblHAL/STM32F4xx.git
 
-      # 5. Clone 3rd Party Plugins (REPLACES LOCAL COPY)
+      # 5. Clone 3rd Party Plugins (Online Repos)
       - name: Install Plugins
         run: |
           mkdir -p STM32F4xx/3rdparty
@@ -67,99 +66,113 @@ jobs:
               response.raise_for_status()
               profile_data = response.json()
 
-              # Extract flags/definitions from the JSON
-              # Note: Adjust 'definitions' key based on actual JSON structure.
-              # If the JSON is a flat list of settings, use profile_data directly.
-              # Assuming standard grblHAL profile structure where keys are definitions.
               build_flags = []
 
-              # Add standard flags needed for this board/driver
+              # --- ESSENTIAL FLAGS FOR THIS DRIVER/BOARD ---
+              # These ensure the STM32F412 HAL and USB stack are active
               build_flags.append("-DSTM32F412Zx")
               build_flags.append("-DUSE_USB_CDC")
 
-              # Convert JSON keys to -D flags
-              # We exclude metadata keys if present (like 'info', 'version')
+              # Keys to ignore from the JSON profile
               ignore_keys = ['info', 'version', 'name', 'description']
 
+              # Parse JSON and create -D flags
               for key, value in profile_data.items():
                   if key not in ignore_keys:
-                      # Handle boolean/integer/string values
                       if value is True:
                           build_flags.append(f"-D{key}")
                       elif value is False:
-                          pass # Don't define it
+                          pass
                       elif isinstance(value, str):
+                          # Escape quotes for string definitions
                           build_flags.append(f'-D{key}=\\"{value}\\"')
                       else:
                           build_flags.append(f"-D{key}={value}")
 
               flags_str = " ".join(build_flags)
 
-              # Create the platformio.ini content
+              # Generate platformio.ini content
+              # Note: 'extra_scripts' is CRITICAL for fixing variant_generic.h errors
               pio_content = f"""
           [platformio]
           src_dir = .
           include_dir = .
+          boards_dir = boards
 
           [env:slb_ext]
           platform = ststm32
           board = genericSTM32F412VG
           framework = arduino
+
+          # Linker script (must exist in repo or be provided)
           board_build.ldscript = STM32F412VGTx_FLASH.ld
 
-          # Libraries and Plugins
+          # CRITICAL: Runs grblHAL setup scripts to fix include paths/variants
+          extra_scripts = pre:extra_script.py
+
+          # Libraries
           lib_extra_dirs = 3rdparty
 
-          # Build Flags generated from JSON profile
+          # Build Flags
           build_flags =
               {flags_str}
               -I.
 
-          # Upload settings (optional for CI, but good for local)
           upload_protocol = dfu
           """
 
-              # Write to file
+              # Save to STM32F4xx folder
               with open("STM32F4xx/platformio.ini", "w") as f:
                   f.write(pio_content)
 
               print("Successfully generated STM32F4xx/platformio.ini")
-              print("Flags used:", flags_str)
+              print("Config Content:\n", pio_content)
 
           except Exception as e:
               print(f"Error generating config: {e}")
               exit(1)
 
-      # 7. Setup Custom Board Definition
-      - name: Setup Board Definition
+      # 7. Inject Custom Board Definition and Scripts
+      - name: Inject Board Definition
         run: |
-          # Copy extra scripts if needed (assuming locally present)
-          if [ -f "extra_script.py" ]; then cp extra_script.py STM32F4xx/; fi
-
-          echo "Setting up custom board definition..."
+          # Copy your custom board definition to the driver's boards folder
           mkdir -p STM32F4xx/boards
-          # Ensure this file exists in your repo
           cp genericSTM32F412VG.json STM32F4xx/boards/
 
-      # 8. Run PlatformIO to compile (Piping output to log for web display)
+          # Ensure extra_script.py is used from the cloned repo,
+          # or overwrite it if you have a custom one in your repo root.
+          if [ -f "extra_script.py" ]; then
+            echo "Copying custom extra_script.py..."
+            cp extra_script.py STM32F4xx/
+          fi
+
+      # 8. Compile Firmware
       - name: Compile Firmware
         working-directory: STM32F4xx
         run: |
-          # Run build and pipe output to both console and a log file
+          # Pipe output to log file for the web page
           pio run -e slb_ext 2>&1 | tee build.log
 
-      # 9. Prepare files for GitHub Pages
+      # 9. Prepare GitHub Pages Content
       - name: Prepare Web Assets
+        if: always() # Run even if compile fails (to show log)
         run: |
           mkdir -p public
 
-          # Move Firmware
-          cp STM32F4xx/.pio/build/slb_ext/*.hex public/firmware.hex
+          # Copy Firmware if it exists
+          if [ -f "STM32F4xx/.pio/build/slb_ext/firmware.hex" ]; then
+            cp STM32F4xx/.pio/build/slb_ext/firmware.hex public/firmware.hex
+            STATUS="Success"
+            COLOR="#28a745"
+          else
+            STATUS="Failed"
+            COLOR="#dc3545"
+          fi
 
-          # Move Log
+          # Copy Log
           cp STM32F4xx/build.log public/build_log.txt
 
-          # Generate HTML
+          # Generate HTML Index
           TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
           cat > public/index.html <<EOF
           <!DOCTYPE html>
@@ -167,38 +180,43 @@ jobs:
           <head>
             <title>AltMill Firmware Build</title>
             <style>
-              body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; }
-              h1 { color: #333; }
-              .card { background: #f4f4f4; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-              .btn { display: inline-block; background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; }
-              .log { background: #222; color: #0f0; padding: 15px; overflow-x: auto; font-family: monospace; max-height: 400px; overflow-y: scroll; }
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f0f2f5; }
+              header { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+              h1 { margin: 0; color: #333; }
+              .badge { background: ${COLOR}; color: white; padding: 5px 10px; border-radius: 4px; font-size: 0.8em; vertical-align: middle; }
+              .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+              .btn { display: inline-block; background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; }
+              .btn:hover { background: #0056b3; }
+              .log-container { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 8px; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; max-height: 600px; overflow-y: auto; }
+              pre { margin: 0; }
             </style>
           </head>
           <body>
-            <h1>GrblHAL Firmware Build (AltMill)</h1>
+            <header>
+              <h1>AltMill Firmware Builder <span class="badge">${STATUS}</span></h1>
+              <p>Last run: ${TIMESTAMP}</p>
+            </header>
 
             <div class="card">
-              <h2>Latest Build Artifacts</h2>
-              <p><strong>Build Date:</strong> ${TIMESTAMP}</p>
-              <br>
-              <a href="firmware.hex" class="btn">Download Firmware (.hex)</a>
+              <h2>Downloads</h2>
+              ${STATUS == 'Success' ? '<p>Firmware compiled successfully.</p><a href="firmware.hex" class="btn">Download firmware.hex</a>' : '<p>Build failed. Check the log below.</p>'}
+              <br><br>
+              <p><small>Profile used: <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json" target="_blank">altmill.json</a></small></p>
             </div>
 
             <div class="card">
-              <h2>Build Configuration</h2>
-              <p>Generated dynamically from <a href="https://github.com/Sienci-Labs/grblhal-profiles/blob/main/profiles/altmill.json">Sienci-Labs Profile</a>.</p>
-            </div>
-
-            <h3>Last Compilation Log</h3>
-            <div class="log">
-              <pre>$(cat public/build_log.txt)</pre>
+              <h2>Compilation Log</h2>
+              <div class="log-container">
+                <pre>$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' public/build_log.txt)</pre>
+              </div>
             </div>
           </body>
           </html>
           EOF
 
-      # 10. Upload Artifact to Actions Tab (Backup)
+      # 10. Upload Artifact to GitHub Actions Run
       - name: Upload Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: SLB_EXT_Firmware
