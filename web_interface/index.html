@@ -1,4 +1,3 @@
-<!-- WebDFU Flasher + Automated Build List + WebSerial DFU Trigger -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -14,16 +13,50 @@
     <script src="FileSaver.js"></script>
     <script src="dfu-util.js"></script>
 
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+
     <style>
       html, body { height: 100%; overflow: hidden; }
       body { display: flex; flex-direction: column; background-color: #f8f9fa; }
+
       #app-container { flex: 1 1 auto; display: flex; overflow: hidden; }
-      #sidebar { flex: 0 0 420px; background-color: #e9ecef; padding: 1.2rem; overflow-y: auto; border-right: 1px solid #dee2e6; }
-      #main-content { flex: 1 1 auto; padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; }
-      #downloadLog { flex-grow: 1; resize: none; font-family: monospace; font-size: 0.85rem; background: #212529; color: #00ff00; border-radius: 4px; }
+
+      /* Sidebar Styling */
+      .sidebar {
+        flex: 0 0 380px;
+        background-color: #e9ecef;
+        padding: 1.2rem;
+        overflow-y: auto;
+      }
+      #sidebar-left { border-right: 1px solid #dee2e6; }
+      #sidebar-right { border-left: 1px solid #dee2e6; }
+
+      #main-content {
+        flex: 1 1 auto;
+        padding: 1.5rem;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        background-color: #fff;
+      }
+
+      #downloadLog {
+        flex-grow: 1;
+        resize: none;
+        font-family: monospace;
+        font-size: 0.85rem;
+        background: #ececec;
+        color: #222222;
+        border-radius: 4px;
+      }
+
       #usbInfo, #dfuInfo { font-family: monospace; white-space: pre-wrap; font-size: 0.75rem; }
+
       .drop-zone { padding: 1rem; border: 2px dashed #adb5bd; border-radius: 0.375rem; background-color: #fff; text-align: center; cursor: pointer; }
       .drop-zone.is-dragging { background-color: #e9ecef; border-color: #0d6efd; }
+
       .build-item { background: white; border: 1px solid #dee2e6; border-radius: 6px; padding: 10px; margin-bottom: 8px; font-size: 0.85rem; }
       .build-name { font-weight: bold; word-break: break-all; line-height: 1.2; display: block; margin-bottom: 4px; }
       .build-meta { font-size: 0.75rem; color: #6c757d; }
@@ -38,39 +71,59 @@
     </nav>
 
     <div id="app-container">
-        <div id="sidebar">
+        <!-- LEFT SIDEBAR: Connection & Info -->
+        <div id="sidebar-left" class="sidebar">
             <div class="d-flex flex-column gap-3">
-
-                <!-- 1. Connection & DFU Trigger -->
                 <div class="card shadow-sm">
                     <div class="card-body">
                         <h6 class="card-title border-bottom pb-2 fw-bold">1. Connection</h6>
                         <p id="status" class="mb-2 small">Disconnected</p>
 
                         <div class="d-grid gap-2">
-
                             <button id="serial-dfu" class="btn btn-outline-dark btn-sm">
                                 <i class="bi bi-terminal-fill"></i> Reboot Board to DFU Mode
                             </button>
-                            <div class="mt-2 small text-muted fst-italic" style="font-size: 0.7rem;">
-                                If board is in "Normal" mode, use the Reboot button first.
-                            </div>
-
                             <button id="connect" class="btn btn-outline-dark btn-sm">
-                                <i class="bi bi-usb-drive-fill"></i> Select DFU/Bootloader Device
+                                <i class="bi bi-usb-drive-fill"></i> Select DFU Device
                             </button>
-
+                            <button id="open-terminal" class="btn btn-outline-dark btn-sm">
+                                <i class="bi bi-terminal"></i> Open Serial Terminal
+                            </button>
                             <button id="detach" class="btn btn-secondary btn-sm" style="display: none;">Switch to DFU Mode</button>
                         </div>
-
                     </div>
                 </div>
 
-                <!-- 2. Automated Builds -->
+                <div class="card shadow-sm">
+                    <div class="card-body p-2">
+                        <h6 class="card-title border-bottom pb-1 mb-2 small fw-bold">Device Info</h6>
+                        <div id="usbInfo" class="text-muted">Not connected</div>
+                        <div id="dfuInfo" class="text-muted mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN CONTENT: Log & Terminal -->
+        <div id="main-content">
+            <h6 class="border-bottom pb-2 mb-2 fw-bold">System Log / Terminal</h6>
+            <progress id="downloadProgress" class="progress w-100 mb-2" value="0" max="100" hidden></progress>
+            <textarea class="form-control" id="downloadLog" readonly></textarea>
+
+            <div id="terminal-input-row" class="input-group mt-2" style="display: none;">
+                <input type="text" id="serial-input" class="form-control border-dark font-monospace" placeholder="Enter command (e.g. ?, $$, $dfu)...">
+                <button id="serial-send-btn" class="btn btn-outline-dark">Send</button>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDEBAR: Builds & Flash -->
+        <div id="sidebar-right" class="sidebar">
+            <div class="d-flex flex-column gap-3">
+                <!-- Automated Builds -->
                 <div class="card shadow-sm">
                     <div class="card-body">
-                        <h6 class="card-title border-bottom pb-2 fw-bold">2. Automated Builds (.hex)</h6>
-                        <div id="build-list-container" style="max-height: 250px; overflow-y: auto;">
+                        <h6 class="card-title border-bottom pb-2 fw-bold">2. Automated Builds</h6>
+                        <div id="build-list-container" style="max-height: 350px; overflow-y: auto;">
                             <div id="loading-builds" class="text-center py-3">
                                 <div class="spinner-border spinner-border-sm text-primary"></div>
                             </div>
@@ -79,17 +132,16 @@
                     </div>
                 </div>
 
-                <!-- 3. Manual Firmware Flash -->
+                <!-- Flash Section -->
                 <div class="card shadow-sm">
                     <div class="card-body">
                         <h6 class="card-title border-bottom pb-2 fw-bold">3. Flash</h6>
-                        Select Automated Build files above or upload own HEX file here:
                         <form id="configForm" onsubmit="return false;" class="d-flex flex-column gap-2">
                             <label for="firmwareFile" id="drop-zone" class="drop-zone">
                                 <input type="file" id="firmwareFile" name="file" accept=".bin,.hex" hidden>
-                                <div class="drop-zone-prompt small">
-                                    <i class="bi bi-cloud-arrow-up-fill fs-3 text-secondary"></i>
-                                    <p class="mb-0"><strong>Drag file here</strong></p>
+                                <div class="drop-zone-prompt small text-muted">
+                                    <i class="bi bi-cloud-arrow-up-fill fs-3"></i>
+                                    <p class="mb-0">Drag file or click</p>
                                 </div>
                                 <div class="drop-zone-filename" style="display:none;">
                                     <i class="bi bi-file-earmark-check-fill text-success fs-3"></i>
@@ -104,13 +156,13 @@
 
                             <div class="accordion accordion-flush" id="advAcc">
                               <div class="accordion-item">
-                                <h2 class="accordion-header"><button class="accordion-button collapsed p-2 small" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAdv">Advanced Settings</button></h2>
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed p-2 small" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAdv">Advanced Settings</button>
+                                </h2>
                                 <div id="collapseAdv" class="accordion-collapse collapse" data-bs-parent="#advAcc">
                                   <div class="accordion-body d-flex flex-column gap-2 pt-2">
                                       <label class="small fw-bold">Transfer Size</label>
                                       <input type="number" id="transferSize" class="form-control form-control-sm" value="2048"/>
-
-                                      <!-- Added id="dfuseFields" here -->
                                       <div id="dfuseFields">
                                           <label class="small fw-bold">Start Address</label>
                                           <input type="text" id="dfuseStartAddress" class="form-control form-control-sm" value="0x08000000" pattern="0x[A-Fa-f0-9]+"/>
@@ -122,22 +174,7 @@
                         </form>
                     </div>
                 </div>
-
-                <!-- Device Info -->
-                <div class="card shadow-sm">
-                    <div class="card-body p-2">
-                        <div id="usbInfo" class="text-muted">Not connected</div>
-                        <div id="dfuInfo" class="text-muted"></div>
-                    </div>
-                </div>
             </div>
-        </div>
-
-        <!-- Main Content for Log -->
-        <div id="main-content">
-            <h6 class="border-bottom pb-2 mb-2 fw-bold">System Log</h6>
-            <progress id="downloadProgress" class="progress w-100 mb-2" value="0" max="100" hidden></progress>
-            <textarea class="form-control" id="downloadLog" readonly></textarea>
         </div>
     </div>
 
@@ -145,9 +182,7 @@
     <dialog id="interfaceDialog" class="p-4 border-0 shadow rounded">
       <h6>Select DFU Interface</h6>
       <form id="interfaceForm" method="dialog">
-        <!-- Add this div -->
         <div id="interface-choices" class="d-flex flex-column gap-2 mb-3"></div>
-
         <div id="interface-button-container" class="d-flex justify-content-end gap-2 mt-3">
             <button type="submit" class="btn btn-primary btn-sm">Select</button>
         </div>
@@ -155,156 +190,196 @@
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        const log = document.getElementById('downloadLog');
+    <script type="module">
+    import { WebSerial } from './webserial.js';
 
-        // --- NEW: WebSerial DFU Mode Switcher ---
-        // --- UPDATED: WebSerial DFU Mode Switcher ---
-        document.getElementById('serial-dfu').addEventListener('click', async () => {
-            if (!("serial" in navigator)) {
-                log.value += "[ERROR] WebSerial is not supported in this browser. Use Chrome, Edge, or Opera.\n";
-                return;
-            }
+    // --- GLOBALS & STATE ---
+    const logArea = document.getElementById('downloadLog');
+    const serialInput = document.getElementById('serial-input');
+    const serialSendBtn = document.getElementById('serial-send-btn');
+    const terminalRow = document.getElementById('terminal-input-row');
+    const serialDfuBtn = document.getElementById('serial-dfu');
+    const openTerminalBtn = document.getElementById('open-terminal');
 
-            let port;
+    const ws = new WebSerial();
+    let commandHistory = [];
+    let historyIndex = -1;
+
+    // --- HELPERS ---
+    function logToUI(msg, type = "INFO") {
+        const timestamp = new Date().toLocaleTimeString([], { hour12: false });
+        logArea.value += `[${timestamp}] [${type}] ${msg}\n`;
+        logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function resetTerminalUI() {
+           terminalRow.style.display = 'none';
+           openTerminalBtn.innerHTML = `<i class="bi bi-terminal"></i> Open Serial Terminal`;
+           openTerminalBtn.classList.remove('btn-danger');
+           openTerminalBtn.classList.add('btn-outline-dark');
+           historyIndex = -1;
+           serialInput.value = "";
+    }
+
+    // --- WEBSERIAL TERMINAL LOGIC ---
+    openTerminalBtn.addEventListener('click', async () => {
+        if (!ws.isConnected) {
             try {
-                log.value += "[INFO] Requesting Serial Port...\n";
-                port = await navigator.serial.requestPort();
-
-                log.value += "[INFO] Opening port at 115200 baud...\n";
-                await port.open({ baudRate: 115200 });
-
-                const encoder = new TextEncoder();
-                const writer = port.writable.getWriter();
-
-                log.value += "[INFO] Sending $dfu command...\n";
-                await writer.write(encoder.encode("$dfu\n"));
-                writer.releaseLock();
-
-                // 1) Read serial port data until it stops or disconnects
-                log.value += "[INFO] Waiting for device response...\n";
-                const decoder = new TextDecoder();
-                let reader = port.readable.getReader();
-
-                try {
-                    while (true) {
-                        // We use a timeout to decide when "data stops streaming"
-                        // If the board reboots, this read() will usually throw an error immediately
-                        const { value, done } = await Promise.race([
-                            reader.read(),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))
-                        ]);
-
-                        if (done) {
-                            log.value += "[INFO] Serial stream closed by device.\n";
-                            break;
-                        }
-
-                        if (value) {
-                            const chunk = decoder.decode(value);
-                            log.value += `[DEVICE] ${chunk}`;
-                            log.scrollTop = log.scrollHeight;
-                        }
-                    }
-                } catch (readErr) {
-                    if (readErr.message === "timeout") {
-                        log.value += "[INFO] No more data received.\n";
-                    } else {
-                        // This happens when the device reboots and the USB serial port disappears
-                        log.value += `[INFO] Device disconnected (expected during reboot).\n`;
-                    }
-                } finally {
-                    reader.releaseLock();
-                    await port.close();
-                    log.value += "[INFO] Port closed.\n";
-                }
-
-                // 2) Automatically trigger the DFU selector button
-                log.value += "[SUCCESS] Attempting to open DFU selector...\n";
-                setTimeout(() => {
-                    document.getElementById('connect').click();
-                }, 500); // Small delay to let the OS recognize the new DFU device
-
+                await ws.connect(115200);
+                terminalRow.style.display = 'flex';
+                openTerminalBtn.innerHTML = `<i class="bi bi-terminal-fill"></i> Close Serial Terminal`;
+                openTerminalBtn.classList.remove('btn-outline-dark');
+                openTerminalBtn.classList.add('btn-danger');
+                serialInput.focus();
             } catch (err) {
-                log.value += `[ERROR] WebSerial Error: ${err.message}\n`;
-                if (port) await port.close().catch(() => {});
+                if (err.name !== 'NotFoundError') {
+                    logToUI(`Connection failed: ${err.message}`, "ERROR");
+                }
             }
-        });
+        } else {
+            await ws.disconnect();
+        }
+    });
 
-        // --- Logic to load automated builds ---
-        async function loadBuildIntoFlasher(url, filename) {
-            const fileInput = document.getElementById('firmwareFile');
-            log.value += `[INFO] Fetching build: ${filename}...\n`;
+    serialInput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (commandHistory.length > 0) {
+                historyIndex = Math.min(historyIndex + 1, commandHistory.length - 1);
+                serialInput.value = commandHistory[commandHistory.length - 1 - historyIndex];
+            }
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            historyIndex = Math.max(historyIndex - 1, -1);
+            serialInput.value = historyIndex === -1 ? "" : commandHistory[commandHistory.length - 1 - historyIndex];
+        } else if (e.key === 'Enter') {
+            sendSerialCommand();
+        }
+    });
 
-            try {
-                const response = await fetch(url);
-                const blob = await response.blob();
-                const file = new File([blob], filename, { type: "text/plain" });
+    async function sendSerialCommand() {
+        const cmd = serialInput.value.trim();
+        if (!cmd) return;
+        if (!ws.isConnected) {
+            logToUI("Serial not connected.", "WARN");
+            return;
+        }
+        logArea.value += `> ${cmd}\n`;
+        logArea.scrollTop = logArea.scrollHeight;
+        await ws.sendCommand(cmd);
+        commandHistory.push(cmd);
+        if (commandHistory.length > 50) commandHistory.shift();
+        historyIndex = -1;
+        serialInput.value = "";
+    }
 
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-                fileInput.files = dataTransfer.files;
+    serialSendBtn.addEventListener('click', sendSerialCommand);
 
-                fileInput.dispatchEvent(new Event('change'));
-                log.value += `[INFO] Build loaded. Ready to flash.\n`;
-            } catch (e) {
-                log.value += `[ERROR] Failed to fetch build: ${e.message}\n`;
+    ws.on('connect', () => {
+        logToUI("Serial Port Opened (115200 baud)", "SERIAL");
+    });
+
+    ws.on('disconnect', () => {
+        logToUI("Serial Port Closed", "SERIAL");
+        resetTerminalUI();
+    });
+
+    ws.on('line', (line) => {
+        logArea.value += `${line}\n`;
+        logArea.scrollTop = logArea.scrollHeight;
+    });
+
+    ws.on('error', (err) => {
+        logToUI(err.message, "ERROR");
+        if (!ws.isConnected || err.message.includes("lost") || err.message.includes("disconnected")) {
+            resetTerminalUI();
+        }
+    });
+
+    serialDfuBtn.addEventListener('click', async () => {
+        try {
+            if (!ws.isConnected) {
+                logToUI("Requesting Serial Port for reboot...", "INFO");
+                await ws.connect(115200);
+            }
+            logToUI("Sending $dfu command...", "INFO");
+            await ws.sendCommand('$dfu');
+            logToUI("Waiting for device response...", "INFO");
+            setTimeout(async () => {
+                if (ws.isConnected) {
+                    await ws.disconnect();
+                }
+                logToUI("Serial closed. Opening DFU selector...", "SUCCESS");
+                document.getElementById('connect').click();
+            }, 1500);
+        } catch (err) {
+            if (err.name !== 'NotFoundError') {
+                logToUI(`Reboot failed: ${err.message}`, "ERROR");
             }
         }
+    });
 
-        async function fetchManifest() {
-            try {
-                const response = await fetch('firmware_manifest.json');
-                const data = await response.json();
-                const list = document.getElementById('automated-builds-list');
-                document.getElementById('loading-builds').style.display = 'none';
-
-                const hexFiles = data.files.filter(f => f.name.toLowerCase().endsWith('.hex'));
-                hexFiles.sort((a, b) => b.name.localeCompare(a.name));
-
-                hexFiles.forEach(file => {
-                    const date = new Date(file.date).toLocaleString();
-                    const item = document.createElement('div');
-                    item.className = 'build-item';
-                    item.innerHTML = `
-                        <span class="build-name">${file.name}</span>
-                        <div class="build-meta mb-2"><i class="bi bi-clock"></i> ${date}</div>
-                        <div class="d-flex gap-1">
-                            <button class="btn btn-outline-dark btn-sm py-0 px-2" onclick="loadBuildIntoFlasher('${file.path}', '${file.name}')">Use this firmware in Flashing Tool</button>
-                            <a href="${file.path}" class="btn btn-outline-dark btn-sm py-0 px-2" download><i class="bi bi-download"></i>Download HEX</a>
-                        </div>
-                    `;
-                    list.appendChild(item);
-                });
-            } catch (e) {
-                document.getElementById('loading-builds').innerHTML = "Error loading builds.";
-            }
+    // --- AUTOMATED BUILD LIST LOGIC ---
+    async function fetchManifest() {
+        const list = document.getElementById('automated-builds-list');
+        const loading = document.getElementById('loading-builds');
+        try {
+            const response = await fetch('firmware_manifest.json');
+            const data = await response.json();
+            loading.style.display = 'none';
+            const hexFiles = data.files.filter(f => f.name.toLowerCase().endsWith('.hex'));
+            hexFiles.sort((a, b) => b.name.localeCompare(a.name));
+            hexFiles.forEach(file => {
+                const item = document.createElement('div');
+                item.className = 'build-item';
+                item.innerHTML = `
+                    <span class="build-name">${file.name}</span>
+                    <div class="build-meta mb-2"><i class="bi bi-clock"></i> ${new Date(file.date).toLocaleString()}</div>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-outline-dark btn-sm py-0 px-2 btn-load-build"
+                                data-url="${file.path}" data-name="${file.name}">Use this firmware</button>
+                        <a href="${file.path}" class="btn btn-outline-dark btn-sm py-0 px-2" download><i class="bi bi-download"></i>Download HEX</a>
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+            list.addEventListener('click', (e) => {
+                if (e.target.classList.contains('btn-load-build')) {
+                    loadBuildIntoFlasher(e.target.dataset.url, e.target.dataset.name);
+                }
+            });
+        } catch (e) {
+            loading.innerHTML = "Error loading builds.";
         }
+    }
 
-        document.addEventListener('DOMContentLoaded', fetchManifest);
+    async function loadBuildIntoFlasher(url, filename) {
+        const fileInput = document.getElementById('firmwareFile');
+        logToUI(`Fetching build: ${filename}...`);
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const file = new File([blob], filename, { type: "text/plain" });
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change'));
+            logToUI("Build loaded into flasher.", "SUCCESS");
+        } catch (e) {
+            logToUI(`Failed to fetch build: ${e.message}`, "ERROR");
+        }
+    }
 
-        // UI Helpers for Drop Zone
-        const firmwareFileInput = document.querySelector('#firmwareFile');
-        const dropZone = document.querySelector('#drop-zone');
-        const fileNameDisplay = document.querySelector('#file-name-display');
-        const fileInfoDisplay = document.querySelector('#file-info-display');
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchManifest();
+    });
 
-        firmwareFileInput.addEventListener('change', () => {
-            if (firmwareFileInput.files.length > 0) {
-                const file = firmwareFileInput.files[0];
-                fileNameDisplay.textContent = file.name;
-                fileInfoDisplay.textContent = "Processing...";
-                dropZone.classList.add('has-file');
-                document.querySelector('.drop-zone-prompt').style.display = 'none';
-                document.querySelector('.drop-zone-filename').style.display = 'block';
-            }
-        });
-
-        firmwareFileInput.addEventListener('firmware:info', (e) => {
-            if (e.detail.fileSize) {
-                fileInfoDisplay.textContent = `${e.detail.fileSize} bytes` + (e.detail.startAddress ? ` @ 0x${e.detail.startAddress.toString(16)}` : "");
-            }
-        });
-    </script>
+    window.sendDfuCommand = async () => {
+        if (ws.isConnected) {
+            await ws.sendCommand('$dfu');
+            setTimeout(() => ws.disconnect(), 500);
+        }
+    };
+</script>
 </body>
 </html>
