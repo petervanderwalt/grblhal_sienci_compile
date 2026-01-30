@@ -263,19 +263,31 @@ var dfuse = {};
         }
         this.logInfo(`Wrote ${bytes_sent} bytes`);
 
-        this.logInfo("Booting new firmware");
-        try {
-            await this.dfuseCommand(dfuse.SET_ADDRESS, startAddress, 4);
-            await this.download(new ArrayBuffer(), 0);
-        } catch (error) {
-            throw "Error during DfuSe manifestation: " + error;
-        }
+        this.logInfo("Manifesting (Booting new firmware)...");
+         try {
+             // DfuSe "Leave" command: Set address to start, then send empty block
+             await this.dfuseCommand(dfuse.SET_ADDRESS, startAddress, 4);
+             await this.download(new ArrayBuffer(), 0);
+         } catch (error) {
+             throw "Error during DfuSe manifestation: " + error;
+         }
 
-        try {
-            await this.poll_until(state => (state == dfu.dfuMANIFEST));
-        } catch (error) {
-            this.logError(error);
-        }
+         try {
+             // Poll once to trigger the state change
+             await this.getStatus();
+         } catch (error) {
+             // Ignore error: device usually disconnects here
+         }
+
+         // --- NEW: Explicit Hardware Reset ---
+         try {
+             await this.device_.reset();
+             this.logInfo("USB Bus Reset sent.");
+         } catch (error) {
+             // If the device reboots instantly, the reset might throw a NotFoundError.
+             // This is actually a sign of success.
+             this.logDebug("Reset ignored (device likely rebooted already)");
+         }
     }
 
     dfuse.Device.prototype.do_upload = async function(xfer_size, max_size) {

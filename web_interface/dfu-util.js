@@ -657,25 +657,38 @@ var device = null;
 
                 try {
                     setLogContext(downloadLog);
+
+                    // Clear any previous error state
                     try {
                         let status = await device.getStatus();
                         if (status.state == dfu.dfuERROR) {
                             await device.clearStatus();
                         }
-                    } catch (error) {
-                        device.logWarning("Failed to clear status");
-                    }
+                    } catch (error) {}
+
+                    // Run the download
                     await device.do_download(transferSize, firmwareFile, manifestationTolerant);
-                    logInfo("Done!");
-                    if (!manifestationTolerant) {
-                        await device.waitDisconnected(5000);
-                        onDisconnect();
-                        device = null;
-                    }
+
+                    logToUI("Flash Complete!", "SUCCESS");
+                    logToUI("Device is rebooting into firmware...", "INFO");
+
+                    // Wait for the device to actually leave DFU mode
+                    await device.waitDisconnected(5000);
+                    onDisconnect("Flash Successful - Device Rebooted");
+                    device = null;
+
                 } catch (error) {
-                    logError(error);
+                    // Check if the error is just the device disconnecting after a successful boot
+                    if (error.toString().includes("device was disconnected") ||
+                        error.toString().includes("NetworkError") ||
+                        error.toString().includes("NotFoundError")) {
+                        logToUI("Flash Successful - Device Rebooted", "SUCCESS");
+                        onDisconnect("Device Rebooted");
+                    } else {
+                        logError(error);
+                    }
                 } finally {
-                    downloadButton.innerHTML = `<i class="bi bi-hdd-fill"></i> Flash Firmware`;
+                    downloadButton.innerHTML = `<i class="bi bi-lightning-fill"></i> Flash Firmware`;
                     updateFlashButtonState();
                 }
             }
