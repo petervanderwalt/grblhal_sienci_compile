@@ -319,21 +319,6 @@
         }
     });
 
-    // --- 1. HANDLE LOCAL FILE SELECTION ---
-    // Listen for the custom event dispatched by dfu-util.js after it parses a file
-    fileInput.addEventListener('firmware:info', (e) => {
-        if (e.detail.fileSize) {
-            const fileName = fileInput.files[0] ? fileInput.files[0].name : "Local File";
-            updateStagingUI(fileName, e.detail.fileSize, e.detail.startAddress);
-        } else {
-            // Reset if no file
-            stagedName.textContent = "No firmware selected";
-            stagedInfo.textContent = "Select a file from above to begin.";
-            downloadBtn.disabled = true;
-        }
-    });
-
-
     // --- AUTOMATED BUILD LIST LOGIC ---
     async function fetchManifest() {
         const list = document.getElementById('automated-builds-list');
