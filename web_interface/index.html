@@ -319,12 +319,27 @@
         }
     });
 
+    // --- 1. HANDLE LOCAL FILE SELECTION ---
+    // Listen for the custom event dispatched by dfu-util.js after it parses a file
+    fileInput.addEventListener('firmware:info', (e) => {
+        if (e.detail.fileSize) {
+            const fileName = fileInput.files[0] ? fileInput.files[0].name : "Local File";
+            updateStagingUI(fileName, e.detail.fileSize, e.detail.startAddress);
+        } else {
+            // Reset if no file
+            stagedName.textContent = "No firmware selected";
+            stagedInfo.textContent = "Select a file from above to begin.";
+            downloadBtn.disabled = true;
+        }
+    });
+
+
     // --- AUTOMATED BUILD LIST LOGIC ---
     async function fetchManifest() {
         const list = document.getElementById('automated-builds-list');
         const loading = document.getElementById('loading-builds');
         try {
-            const response = await fetch('firmware_manifest.json');
+            const response = await fetch('https://petervanderwalt.github.io/grblhal_sienci_compile/firmware_manifest.json');
             const data = await response.json();
             loading.style.display = 'none';
             const hexFiles = data.files.filter(f => f.name.toLowerCase().endsWith('.hex'));
