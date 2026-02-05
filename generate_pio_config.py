@@ -5,14 +5,15 @@ from pathlib import Path
 import urllib.request
 import re
 
-PROFILE_URL = (
-    "https://raw.githubusercontent.com/Sienci-Labs/"
-    "grblhal-profiles/main/profiles/altmill.json"
-)
+# List of profiles to include
+PROFILE_URLS = [
+    "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles/altmill.json",
+    "https://raw.githubusercontent.com/Sienci-Labs/grblhal-profiles/main/profiles/longmill.json"
+]
 
 OUTPUT_INI = Path("platformio.ini")
 
-# MATCHING BASELINE EXACTLY: Restore boards to lib_deps/lib_extra_dirs
+# STATIC_HEADER remains the same
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -91,7 +92,6 @@ custom_prog_version = SLB_EXT
 custom_board_name = 'default'
 """
 
-# These are the specific flags found in your working baseline but missing from the JSON
 SYSTEM_BASELINE_FLAGS = [
     "-D BOARD_LONGBOARD32_EXT",
     "-D USE_HAL_DRIVER",
@@ -138,6 +138,7 @@ def sanitize_env_name(name: str) -> str:
     return name.strip("_")
 
 def download_profile(url):
+    print(f"Downloading profile: {url}")
     with urllib.request.urlopen(url) as resp:
         return json.loads(resp.read().decode())
 
@@ -145,15 +146,11 @@ def format_build_flags(defines):
     lines = []
     for k in sorted(defines.keys()):
         v = defines[k]
-        # Map SIENCI_ATCI to ATCI_ENABLE (Baseline uses ATCI_ENABLE)
         key = "ATCI_ENABLE" if k == "SIENCI_ATCI" else k
-
-        # ASCII conversion for AXIS letters (A -> 65)
         if key.endswith("_LETTER") and isinstance(v, str):
             char = v.replace("'", "").strip()
             if len(char) == 1:
                 v = ord(char)
-
         if isinstance(v, bool):
             if v: lines.append(f"  -D {key}")
         else:
@@ -195,22 +192,32 @@ lib_extra_dirs = ${{common.lib_extra_dirs}}
 """
 
 def main():
-    profile = download_profile(PROFILE_URL)
-    machine = profile.get("machine", {})
-    global_defines = {
-        **machine.get("default_symbols", {}),
-        **machine.get("setting_defaults", {})
-    }
+    all_env_names = []
+    all_envs_content = ""
 
-    variants = profile.get("variants")
-    env_names = [sanitize_env_name(v["name"]) for v in variants]
+    for url in PROFILE_URLS:
+        try:
+            profile = download_profile(url)
+            machine = profile.get("machine", {})
+            global_defines = {
+                **machine.get("default_symbols", {}),
+                **machine.get("setting_defaults", {})
+            }
 
-    content = STATIC_HEADER.format(default_envs=", ".join(env_names)).strip() + "\n"
-    for variant in variants:
-        content += generate_env(variant, global_defines)
+            variants = profile.get("variants", [])
+            for variant in variants:
+                env_name = sanitize_env_name(variant["name"])
+                all_env_names.append(env_name)
+                all_envs_content += generate_env(variant, global_defines)
+        except Exception as e:
+            print(f"Error processing {url}: {e}")
+
+    # Combine the static header with all found environments
+    content = STATIC_HEADER.format(default_envs=", ".join(all_env_names)).strip() + "\n"
+    content += all_envs_content
 
     OUTPUT_INI.write_text(content)
-    print(content)
+    print(f"Successfully generated platformio.ini with {len(all_env_names)} environments.")
 
 if __name__ == "__main__":
     main()
