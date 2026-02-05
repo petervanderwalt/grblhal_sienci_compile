@@ -13,7 +13,6 @@ PROFILE_URLS = [
 
 OUTPUT_INI = Path("platformio.ini")
 
-# STATIC_HEADER remains the same
 STATIC_HEADER = """
 [platformio]
 default_envs = {default_envs}
@@ -88,12 +87,10 @@ lib_ldf_mode = off
 extra_scripts =
     pre:extra_script.py
     post:extra_script.py
-custom_prog_version = SLB_EXT
-custom_board_name = 'default'
 """
 
+# Note: BOARD_LONGBOARD32_EXT removed from here; added dynamically per profile
 SYSTEM_BASELINE_FLAGS = [
-    "-D BOARD_LONGBOARD32_EXT",
     "-D USE_HAL_DRIVER",
     "-D STM32F412Vx",
     "-D WEB_BUILD",
@@ -157,7 +154,7 @@ def format_build_flags(defines):
             lines.append(f"  -D {key}={v}")
     return "\n".join(lines)
 
-def generate_env(variant, global_defines):
+def generate_env(variant, global_defines, board_define, prefix):
     display_name = variant["name"]
     env_name = sanitize_env_name(display_name)
 
@@ -174,11 +171,14 @@ def generate_env(variant, global_defines):
 board = genericSTM32F412VG
 upload_protocol = dfu
 board_build.ldscript = STM32F412VGTX_FLASH.ld
+custom_prog_version = {prefix}
+custom_board_name = '{display_name}'
 build_flags =
   ${{common.build_flags}}
   ${{wiznet_networking.build_flags}}
   -I ./3rdparty/grblhal-rgb-plugin
   -I ./3rdparty/grblhal-keepout-plugin
+  -D {board_define}
 {sys_flags}
 {v_flags}
 
@@ -199,6 +199,12 @@ def main():
         try:
             profile = download_profile(url)
             machine = profile.get("machine", {})
+
+            # 1. Determine Board and File Prefix
+            board_define = machine.get("default_board", "BOARD_LONGBOARD32_EXT")
+            # If board is the EXT version, prefix SLB_EXT, otherwise just SLB
+            prefix = "SLB_EXT" if "EXT" in board_define else "SLB"
+
             global_defines = {
                 **machine.get("default_symbols", {}),
                 **machine.get("setting_defaults", {})
@@ -208,16 +214,16 @@ def main():
             for variant in variants:
                 env_name = sanitize_env_name(variant["name"])
                 all_env_names.append(env_name)
-                all_envs_content += generate_env(variant, global_defines)
+                # 2. Pass board-specific info to the env generator
+                all_envs_content += generate_env(variant, global_defines, board_define, prefix)
         except Exception as e:
             print(f"Error processing {url}: {e}")
 
-    # Combine the static header with all found environments
     content = STATIC_HEADER.format(default_envs=", ".join(all_env_names)).strip() + "\n"
     content += all_envs_content
 
     OUTPUT_INI.write_text(content)
-    print(f"Successfully generated platformio.ini with {len(all_env_names)} environments.")
+    print(f"Generated platformio.ini with {len(all_env_names)} environments.")
 
 if __name__ == "__main__":
     main()
