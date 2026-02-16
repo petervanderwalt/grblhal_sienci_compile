@@ -1,0 +1,33 @@
+{
+    "generated_at": "2026-02-16T16:51:37.968239",
+    "files": [
+        {
+            "name": "SLB_EXT_altmill_mk2_4x4_standard_firmware_keepout_plugin_ngc_expressions_tool_table_4_axes_h100_20260216-1650.hex",
+            "path": "firmware/SLB_EXT_altmill_mk2_4x4_standard_firmware_keepout_plugin_ngc_expressions_tool_table_4_axes_h100_20260216-1650.hex",
+            "size": 992671,
+            "date": "2026-02-16T16:51:37.968210",
+            "type": "hex"
+        },
+        {
+            "name": "SLB_EXT_altmill_mk2_4x4_mini_firmware_incl_4_axes_rotary_20260216-1650.hex",
+            "path": "firmware/SLB_EXT_altmill_mk2_4x4_mini_firmware_incl_4_axes_rotary_20260216-1650.hex",
+            "size": 942451,
+            "date": "2026-02-16T16:51:37.968223",
+            "type": "hex"
+        },
+        {
+            "name": "SLB_EXT_altmill_mk2_4x4_durapulsegs20_firmware_keepout_plugin_ngc_expressions_tool_table_4_axes_gs20_20260216-1651.hex",
+            "path": "firmware/SLB_EXT_altmill_mk2_4x4_durapulsegs20_firmware_keepout_plugin_ngc_expressions_tool_table_4_axes_gs20_20260216-1651.hex",
+            "size": 992716,
+            "date": "2026-02-16T16:51:37.968231",
+            "type": "hex"
+        },
+        {
+            "name": "SLB_longmill_stock_firmware_4_axes_rotary_tool_table_ngc_expressions_etc_20260216-1651.hex",
+            "path": "firmware/SLB_longmill_stock_firmware_4_axes_rotary_tool_table_ngc_expressions_etc_20260216-1651.hex",
+            "size": 1020526,
+            "date": "2026-02-16T16:51:37.968237",
+            "type": "hex"
+        }
+    ]
+}
