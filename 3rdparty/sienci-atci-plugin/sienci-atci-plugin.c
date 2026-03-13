@@ -84,6 +84,10 @@ static on_tool_selected_ptr prev_on_tool_selected = NULL;
 static on_tool_changed_ptr prev_on_tool_changed = NULL;
 static bool tc_macro_running = false;
 
+static void onReportOptions (bool newopt);
+static void onRealtimeReport (stream_write_ptr stream_write, report_tracking_flags_t report);
+static void onReportNgcParameters (void);
+
 /* Additional sensor states and inside zone marker */
 static bool drawbar_state = false;
 static bool tool_sensor_state = false;
